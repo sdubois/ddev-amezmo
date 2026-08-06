@@ -1,0 +1,20 @@
+name: Bug report
+description: Report a reproducible ddev-amezmo problem
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Include sanitized output. Never include database passwords or private keys.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: DDEV version
+    validations:
+      required: true
+

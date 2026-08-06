@@ -1,0 +1,14 @@
+name: Feature request
+description: Suggest a pull-only integration improvement
+body:
+  - type: textarea
+    attributes:
+      label: Proposed improvement
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Use case
+    validations:
+      required: true
+

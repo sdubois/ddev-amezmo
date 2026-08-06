@@ -1,0 +1,26 @@
+#ddev-generated
+# Amezmo production pull-only provider. Edit the matching environment profile
+# under .ddev/amezmo/environments and remove its ddev-generated marker after
+# customization so an add-on upgrade will not overwrite it.
+
+info_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile production info
+
+auth_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile production auth
+
+db_pull_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile production pull-db
+
+files_import_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile production pull-files
+
+# Push actions are intentionally absent. This add-on never writes to Amezmo.

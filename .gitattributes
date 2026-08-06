@@ -1,0 +1,7 @@
+# Exclude development-only files from release archives.
+tests/ export-ignore
+.github/ export-ignore
+.gitattributes export-ignore
+.editorconfig export-ignore
+PLAN.md export-ignore
+

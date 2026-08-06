@@ -1,0 +1,27 @@
+name: amezmo
+
+pre_install_actions:
+  - |
+    #ddev-description:Verify this is a configured DDEV project
+    if [ ! -f "${DDEV_APPROOT}/.ddev/config.yaml" ]; then
+      echo "ddev-amezmo must be installed inside a configured DDEV project. Run 'ddev config' first." >&2
+      exit 1
+    fi
+
+project_files:
+  - providers/amezmo-production.yaml
+  - providers/amezmo-staging.yaml
+  - amezmo/amezmo
+  - amezmo/environments/production.env
+  - amezmo/environments/staging.env
+  - commands/host/amezmo
+
+post_install_actions:
+  - |
+    #ddev-description:Show Amezmo setup instructions
+    chmod +x amezmo/amezmo commands/host/amezmo
+    echo "ddev-amezmo installed. Configure .ddev/amezmo/environments/production.env and staging.env, add their database passwords to .ddev/config.local.yaml, restart DDEV, then run 'ddev amezmo doctor production' and 'ddev amezmo pull production'."
+
+removal_actions: []
+
+ddev_version_constraint: '>= v1.24.10'

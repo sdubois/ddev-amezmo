@@ -1,0 +1,44 @@
+name: tests
+
+on:
+  pull_request:
+    paths-ignore:
+      - '**.md'
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+  schedule:
+    - cron: '25 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  addon-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        ddev_version: [stable, HEAD]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ddev/github-action-add-on-test@v2
+        with:
+          ddev_version: ${{ matrix.ddev_version }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          addon_repository: ${{ env.GITHUB_REPOSITORY }}
+          addon_ref: ${{ env.GITHUB_REF }}
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test tools
+        run: sudo apt-get update && sudo apt-get install -y bats shellcheck python3-yaml
+      - name: Validate shell
+        run: shellcheck amezmo/amezmo commands/host/amezmo tests/*.bash
+      - name: Validate YAML
+        run: python3 -c 'import pathlib,yaml; [yaml.safe_load(p.read_text()) for p in pathlib.Path(".").rglob("*.yaml")]'
+      - name: Run unit tests
+        run: bats tests/test.bats

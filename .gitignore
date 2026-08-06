@@ -1,0 +1,7 @@
+.DS_Store
+.ddev/.downloads/
+.ddev/config.local.yaml
+PLAN.md
+.env
+.env.*
+!.env.example

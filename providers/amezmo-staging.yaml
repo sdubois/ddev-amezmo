@@ -1,0 +1,26 @@
+#ddev-generated
+# Amezmo staging pull-only provider. Every connection value is independent;
+# shared-container plans may repeat production's SSH values, while isolated
+# plans may use a different host and port.
+
+info_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile staging info
+
+auth_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile staging auth
+
+db_pull_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile staging pull-db
+
+files_import_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile staging pull-files
+
+# Push actions are intentionally absent. This add-on never writes to Amezmo.

@@ -7,15 +7,15 @@ readonly PROGRAM="ddev-amezmo"
 
 load_profile() {
   local profile="$1" app_root="${DDEV_APPROOT:-$PWD}" profile_file
-  [[ "$profile" =~ ^[A-Za-z0-9._-]+$ ]] || die "environment profile contains unsupported characters."
+  [[ "$profile" =~ ^[A-Za-z0-9._-]+$ ]] || die "environment name contains unsupported characters."
   profile_file="${app_root}/.ddev/amezmo/environments/${profile}.env"
-  [[ -r "$profile_file" ]] || die "environment profile '$profile' was not found at $profile_file."
+  [[ -r "$profile_file" ]] || die "Amezmo environment profile '$profile' was not found at $profile_file."
 
   # Profiles are add-on configuration files owned by the project.
   # shellcheck disable=SC1090
   source "$profile_file"
   [[ "${AMEZMO_ENVIRONMENT:-}" == "$profile" ]] \
-    || die "profile $profile_file must set AMEZMO_ENVIRONMENT=$profile."
+    || die "$profile_file must set AMEZMO_ENVIRONMENT=$profile."
 
 }
 
@@ -30,7 +30,7 @@ require_command() {
 
 require_value() {
   local key="$1"
-  [[ -n "${!key:-}" ]] || die "required configuration key $key is empty. Configure the selected .ddev/amezmo/environments profile or use --environment."
+  [[ -n "${!key:-}" ]] || die "Amezmo setting $key is empty. Configure it in the selected environment profile."
 }
 
 validate_token() {
@@ -48,22 +48,22 @@ validate_port() {
 validate_remote_path() {
   local key="$1" value="${!1:-}"
   require_value "$key"
-  [[ "$value" == /* ]] || die "$key must be an absolute remote path."
-  [[ "$value" != "/" ]] || die "$key may not be '/'."
+  [[ "$value" == /* ]] || die "$key must be an absolute path on the Amezmo environment."
+  [[ "$value" != "/" ]] || die "$key may not be '/'; choose the specific application or storage directory."
   [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || die "$key contains a control character."
-  [[ "$value" =~ ^[A-Za-z0-9_./@+,:=\ -]+$ ]] || die "$key contains unsafe shell characters."
+  [[ "$value" =~ ^[A-Za-z0-9_./@+,:=\ -]+$ ]] || die "$key contains characters that cannot be used safely in an Amezmo path."
 }
 
 validate_local_path() {
   require_value AMEZMO_LOCAL_FILES_PATH
   local value="$AMEZMO_LOCAL_FILES_PATH" part
-  [[ "$value" != /* ]] || die "AMEZMO_LOCAL_FILES_PATH must be relative to the project root."
-  [[ "$value" != "." ]] || die "AMEZMO_LOCAL_FILES_PATH may not be the project root."
+  [[ "$value" != /* ]] || die "AMEZMO_LOCAL_FILES_PATH must be relative to the local project root."
+  [[ "$value" != "." ]] || die "AMEZMO_LOCAL_FILES_PATH may not be the local project root."
   [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || die "AMEZMO_LOCAL_FILES_PATH contains a control character."
-  [[ "$value" =~ ^[A-Za-z0-9_./@+\ -]+$ ]] || die "AMEZMO_LOCAL_FILES_PATH contains unsafe characters."
+  [[ "$value" =~ ^[A-Za-z0-9_./@+\ -]+$ ]] || die "AMEZMO_LOCAL_FILES_PATH contains characters that cannot be used safely."
   IFS='/' read -r -a parts <<< "$value"
   for part in "${parts[@]}"; do
-    [[ "$part" != ".." ]] || die "AMEZMO_LOCAL_FILES_PATH may not contain '..'."
+    [[ "$part" != ".." ]] || die "AMEZMO_LOCAL_FILES_PATH may not contain '..' paths."
   done
 }
 
@@ -80,7 +80,7 @@ validate_drush_alias() {
   require_value AMEZMO_DRUSH_ALIAS
   local alias="${AMEZMO_DRUSH_ALIAS#@}"
   [[ "$alias" =~ ^[A-Za-z0-9._-]+$ ]] \
-    || die "AMEZMO_DRUSH_ALIAS contains unsupported characters. Use a Drush alias name such as live or staging."
+    || die "AMEZMO_DRUSH_ALIAS contains unsupported characters. Use the Drush alias for this Amezmo environment, such as live or staging."
 }
 
 validate_app_type() {
@@ -102,7 +102,7 @@ validate_cli_path() {
   local key="$1" value="${!1:-}"
   require_value "$key"
   [[ "$value" =~ ^[A-Za-z0-9_./@+-]+$ ]] \
-    || die "$key contains unsupported characters."
+    || die "$key contains characters that cannot be used safely in a command path."
 }
 
 ssh_target() {
@@ -111,7 +111,7 @@ ssh_target() {
 
 ssh_check() {
   ssh -p "$AMEZMO_SSH_PORT" -o BatchMode=yes -o ConnectTimeout=10 "$(ssh_target)" true >/dev/null \
-    || die "SSH connection to $(ssh_target):${AMEZMO_SSH_PORT} failed. Enable SSH, trust your IP, upload your public key, and verify the host key."
+    || die "Could not connect to Amezmo's SSH endpoint $(ssh_target):${AMEZMO_SSH_PORT}. Enable SSH, add your public key, trust your current IP if required, and verify the host key."
 }
 
 shell_quote() {
@@ -127,7 +127,7 @@ validate_local_drush() {
   local drush_path
   drush_path="$(local_drush_path)"
   [[ -x "$drush_path" ]] \
-    || die "local Drush executable was not found at $drush_path. Run this from a consuming project with vendor/bin/drush installed."
+    || die "Local Drush was not found at $drush_path. Run this from a DDEV project with vendor/bin/drush installed."
 }
 
 remote_command() {
@@ -151,14 +151,14 @@ validate_legacy_rsync_paths() {
 auth() {
   require_command ssh
   validate_ssh_config
-  printf 'Checking SSH access to Amezmo environment %s at %s:%s...\n' "${AMEZMO_ENVIRONMENT:-production}" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT"
+  printf "Checking SSH access to Amezmo's %s environment at %s:%s...\n" "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT"
   ssh_check
   printf 'SSH connection succeeded.\n'
 }
 
 info() {
   validate_ssh_config
-  printf '%s (%s@%s:%s)\n' "$AMEZMO_ENVIRONMENT" "$AMEZMO_SSH_USER" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT"
+  printf 'Amezmo %s environment — SSH endpoint %s@%s:%s\n' "$AMEZMO_ENVIRONMENT" "$AMEZMO_SSH_USER" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT"
 }
 
 pull_db() {
@@ -180,9 +180,9 @@ pull_db() {
       local drush_path drush_alias
       drush_path="$(local_drush_path)"
       drush_alias="@${AMEZMO_DRUSH_ALIAS#@}"
-      printf 'Streaming database via local Drush alias @%s to %s (%s)...\n' "${AMEZMO_DRUSH_ALIAS#@}" "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
+      printf 'Downloading the Amezmo database from %s using Drush alias @%s...\n' "${AMEZMO_ENVIRONMENT:-unknown}" "${AMEZMO_DRUSH_ALIAS#@}"
       if ! (cd "$app_root" && "$drush_path" "$drush_alias" sql:dump --gzip --no-interaction > "$dump_file" 2>"$tmp_dir/cli.stderr"); then
-        die "Drush database dump failed; the local database has not been imported. Verify the Drush alias and remote Drupal environment."
+        die "Could not download the Amezmo database with Drush. Verify the Drush alias and the selected Amezmo environment."
       fi
       ;;
     wordpress)
@@ -190,23 +190,23 @@ pull_db() {
       if [[ -n "${AMEZMO_REMOTE_CLI_PATH:-}" ]]; then
         validate_cli_path AMEZMO_REMOTE_CLI_PATH
       fi
-      printf 'Streaming database via WP-CLI from %s (%s)...\n' "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
+      printf 'Downloading the Amezmo database from %s using WP-CLI...\n' "${AMEZMO_ENVIRONMENT:-unknown}"
       if ! remote_command "cd $(shell_quote "$AMEZMO_REMOTE_APP_ROOT") && $(shell_quote "$remote_cli") db export - --single-transaction --quiet" 2>"$tmp_dir/cli.stderr" | gzip > "$dump_file"; then
-        die "WP-CLI database dump failed; the local database has not been imported. Verify AMEZMO_REMOTE_CLI_PATH and the remote WordPress installation."
+        die "Could not download the Amezmo database with WP-CLI. Verify AMEZMO_REMOTE_CLI_PATH and the selected Amezmo WordPress environment."
       fi
       ;;
     custom)
       validate_command AMEZMO_REMOTE_DB_DUMP_COMMAND
-      printf 'Streaming database via configured application command from %s (%s)...\n' "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
+      printf 'Downloading the Amezmo database from %s using the configured application command...\n' "${AMEZMO_ENVIRONMENT:-unknown}"
       if ! remote_command "cd $(shell_quote "$AMEZMO_REMOTE_APP_ROOT") && $AMEZMO_REMOTE_DB_DUMP_COMMAND" 2>"$tmp_dir/cli.stderr" | gzip > "$dump_file"; then
-        die "Configured database dump command failed; the local database has not been imported."
+        die "Could not download the Amezmo database with the configured application command."
       fi
       ;;
   esac
-  [[ -s "$dump_file" ]] || die "remote database dump was empty; the local database has not been imported."
-  gzip -t "$dump_file" || die "Database dump was not valid gzip; the local database has not been imported."
+  [[ -s "$dump_file" ]] || die "The Amezmo database export was empty; the local database was not changed."
+  gzip -t "$dump_file" || die "The Amezmo database export was not valid gzip; the local database was not changed."
   mv "$dump_file" "$download_dir/db.sql.gz"
-  printf 'Database dump downloaded; DDEV will now import it.\n'
+  printf 'Amezmo database downloaded. DDEV will now import it into the local database.\n'
   cleanup
   trap - EXIT HUP INT TERM
 }
@@ -225,9 +225,9 @@ pull_files() {
     rsync_args+=(--protect-args)
   else
     validate_legacy_rsync_paths
-    printf 'Installed rsync does not support --protect-args; using legacy-safe path mode.\n' >&2
+    printf 'Installed rsync does not support --protect-args; using compatibility-safe path mode.\n' >&2
   fi
-  printf 'Pulling files from %s:%s into %s (no remote writes, no deletion)...\n' "$AMEZMO_SSH_HOST" "$AMEZMO_REMOTE_FILES_PATH" "$AMEZMO_LOCAL_FILES_PATH"
+  printf "Downloading persistent storage from Amezmo's %s environment at %s into local path %s (Amezmo is not changed; files are not deleted)...\n" "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_REMOTE_FILES_PATH" "$AMEZMO_LOCAL_FILES_PATH"
   rsync_args+=(
     --no-owner --no-group \
     --exclude='/.git/' --exclude='/.env' --exclude='/.env.*' \
@@ -239,14 +239,15 @@ pull_files() {
     "$(ssh_target):${AMEZMO_REMOTE_FILES_PATH%/}/" "$destination/"
   )
   rsync "${rsync_args[@]}" \
-    || die "rsync failed; local files may have been partially updated. Check AMEZMO_REMOTE_FILES_PATH and remote rsync availability."
-  printf 'Files pull succeeded.\n'
+    || die "Persistent storage download failed; local files may be partially updated. Check the Amezmo storage path and rsync availability."
+  printf 'Persistent storage download completed.\n'
 }
 
 push_warning() {
-  printf '\nWARNING: This will write local %s data to the remote Amezmo %s environment at %s:%s.\n' \
-    "${AMEZMO_APP_TYPE:-application}" "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT" >&2
-  printf 'It can overwrite important remote database rows or files. Confirm the DDEV push prompt only if this target and local data are correct.\n\n' >&2
+  printf "\nWARNING: This will upload your local database and persistent storage files to Amezmo's %s environment at %s:%s.\n" \
+    "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT" >&2
+  printf 'The database upload can replace the target database contents. File uploads overwrite matching files but do not delete files already in the environment.\n' >&2
+  printf 'Continue only if this Amezmo environment and the local data are correct.\n\n' >&2
 }
 
 push_db() {
@@ -266,27 +267,27 @@ push_db() {
       if [[ -n "${AMEZMO_REMOTE_CLI_PATH:-}" ]]; then
         validate_cli_path AMEZMO_REMOTE_CLI_PATH
       fi
-      printf 'Pushing local database to %s (%s) with Drush...\n' "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
+      printf 'Uploading the local database to Amezmo %s with Drush...\n' "${AMEZMO_ENVIRONMENT:-unknown}"
       gzip -dc "$dump_file" | remote_command "cd $(shell_quote "$AMEZMO_REMOTE_APP_ROOT") && $(shell_quote "$remote_cli") sql:cli" \
-        || die "remote Drupal database import failed. Verify AMEZMO_REMOTE_CLI_PATH and the target environment."
+        || die "Could not upload the database to Amezmo with Drush. Verify AMEZMO_REMOTE_CLI_PATH and the selected environment."
       ;;
     wordpress)
       remote_cli="${AMEZMO_REMOTE_CLI_PATH:-wp}"
       if [[ -n "${AMEZMO_REMOTE_CLI_PATH:-}" ]]; then
         validate_cli_path AMEZMO_REMOTE_CLI_PATH
       fi
-      printf 'Pushing local database to %s (%s) with WP-CLI...\n' "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
+      printf 'Uploading the local database to Amezmo %s with WP-CLI...\n' "${AMEZMO_ENVIRONMENT:-unknown}"
       gzip -dc "$dump_file" | remote_command "cd $(shell_quote "$AMEZMO_REMOTE_APP_ROOT") && $(shell_quote "$remote_cli") db import -" \
-        || die "remote WordPress database import failed. Verify AMEZMO_REMOTE_CLI_PATH and the target environment."
+        || die "Could not upload the database to Amezmo with WP-CLI. Verify AMEZMO_REMOTE_CLI_PATH and the selected environment."
       ;;
     custom)
       validate_command AMEZMO_REMOTE_DB_IMPORT_COMMAND
-      printf 'Pushing local database to %s (%s) with the configured import command...\n' "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
+      printf 'Uploading the local database to Amezmo %s with the configured application command...\n' "${AMEZMO_ENVIRONMENT:-unknown}"
       gzip -dc "$dump_file" | remote_command "cd $(shell_quote "$AMEZMO_REMOTE_APP_ROOT") && $AMEZMO_REMOTE_DB_IMPORT_COMMAND" \
-        || die "configured remote database import command failed."
+        || die "Could not upload the database with the configured application command."
       ;;
   esac
-  printf 'Database push succeeded.\n'
+  printf 'Database upload completed.\n'
 }
 
 push_files() {
@@ -298,15 +299,15 @@ push_files() {
   local app_root="${DDEV_APPROOT:-$PWD}" source
   local -a rsync_args=( -rlptz --safe-links )
   source="$app_root/$AMEZMO_LOCAL_FILES_PATH"
-  [[ -d "$source" ]] || die "local files directory was not found at $source"
+  [[ -d "$source" ]] || die "Local persistent storage directory was not found at $source"
   push_warning
   if rsync_supports_protect_args; then
     rsync_args+=(--protect-args)
   else
     validate_legacy_rsync_paths
-    printf 'Installed rsync does not support --protect-args; using legacy-safe path mode.\n' >&2
+    printf 'Installed rsync does not support --protect-args; using compatibility-safe path mode.\n' >&2
   fi
-  printf 'Pushing files from %s to %s:%s (no remote deletion)...\n' "$AMEZMO_LOCAL_FILES_PATH" "$AMEZMO_SSH_HOST" "$AMEZMO_REMOTE_FILES_PATH"
+  printf "Uploading persistent storage from local path %s to Amezmo's %s environment at %s (existing Amezmo files are not deleted)...\n" "$AMEZMO_LOCAL_FILES_PATH" "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_REMOTE_FILES_PATH"
   rsync_args+=(
     --no-owner --no-group \
     --exclude='/.git/' --exclude='/.env' --exclude='/.env.*' \
@@ -318,8 +319,8 @@ push_files() {
     "$source/" "$(ssh_target):${AMEZMO_REMOTE_FILES_PATH%/}/"
   )
   rsync "${rsync_args[@]}" \
-    || die "rsync push failed; remote files may have been partially updated. Check AMEZMO_REMOTE_FILES_PATH and remote rsync availability."
-  printf 'Files push succeeded.\n'
+    || die "Persistent storage upload failed; Amezmo files may be partially updated. Check the Amezmo storage path and rsync availability."
+  printf 'Persistent storage upload completed.\n'
 }
 
 doctor() {
@@ -336,7 +337,7 @@ doctor() {
   quoted_files="$(shell_quote "$AMEZMO_REMOTE_FILES_PATH")"
   ssh -p "$AMEZMO_SSH_PORT" -o BatchMode=yes "$(ssh_target)" \
     "test -d $quoted_app && test -r $quoted_app && test -d $quoted_files && test -r $quoted_files && command -v rsync >/dev/null" \
-    || die "remote checks failed. Verify both remote paths are readable and rsync is installed on the Amezmo instance."
+    || die "Amezmo environment checks failed. Verify the application root and persistent storage paths are readable and rsync is installed."
   case "$AMEZMO_APP_TYPE" in
     drupal)
       validate_drush_alias
@@ -354,15 +355,15 @@ doctor() {
         validate_cli_path AMEZMO_REMOTE_CLI_PATH
       fi
       remote_command "cd $quoted_app && $(shell_quote "$remote_cli") db check --quiet" >/dev/null 2>&1 \
-        || die "WP-CLI database connectivity failed. Verify AMEZMO_REMOTE_CLI_PATH and the remote WordPress installation."
+        || die "Could not connect to the Amezmo WordPress database with WP-CLI. Verify AMEZMO_REMOTE_CLI_PATH and the selected environment."
       ;;
     custom)
       validate_command AMEZMO_REMOTE_HEALTH_COMMAND
       remote_command "cd $quoted_app && $AMEZMO_REMOTE_HEALTH_COMMAND" >/dev/null 2>&1 \
-        || die "Configured application health command failed."
+        || die "The configured Amezmo application health check failed."
       ;;
   esac
-  printf 'Amezmo doctor passed for %s at %s:%s. Local files target: %s\n' "${AMEZMO_ENVIRONMENT:-production}" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT" "$AMEZMO_LOCAL_FILES_PATH"
+  printf 'Amezmo %s environment check passed. SSH endpoint: %s:%s. Local persistent storage path: %s\n' "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT" "$AMEZMO_LOCAL_FILES_PATH"
 }
 
 if [[ "${1:-}" == "--profile" ]]; then

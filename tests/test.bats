@@ -48,7 +48,7 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   run "$BATS_TEST_DIRNAME/../commands/host/amezmo" push production --skip-db -y
   [ "$status" -eq 0 ]
   grep -q '^push amezmo-production --skip-db -y$' "$BATS_TEST_TMPDIR/ddev.args"
-  [[ "$output" == *"ddev push will write local database/files to Amezmo environment production"* ]]
+  [[ "$output" == *"upload your local database and persistent storage files to Amezmo's production environment"* ]]
 }
 
 @test "generated profiles keep environments and Drush aliases independent" {
@@ -75,13 +75,13 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
     "$BATS_TEST_DIRNAME/../amezmo/environments/production.env" > "$profile_dir/production.env"
   run "$HELPER" --profile production doctor
   [ "$status" -eq 0 ]
-  [[ "$output" == *"production at production.example.test:2201"* ]]
+  [[ "$output" == *"Amezmo production environment"*"production.example.test:2201"* ]]
 }
 
 @test "missing named profile fails clearly" {
   run "$HELPER" --profile qa doctor
   [ "$status" -ne 0 ]
-  [[ "$output" == *"environment profile 'qa' was not found"* ]]
+  [[ "$output" == *"Amezmo environment profile 'qa' was not found"* ]]
 }
 
 @test "amezmo pull delegates the named environment and flags to DDEV" {
@@ -98,7 +98,7 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
 @test "amezmo pull rejects an environment without a provider" {
   run "$BATS_TEST_DIRNAME/../commands/host/amezmo" pull qa
   [ "$status" -ne 0 ]
-  [[ "$output" == *"provider for environment 'qa' was not found"* ]]
+  [[ "$output" == *"provider configuration for Amezmo environment 'qa' was not found"* ]]
 }
 
 @test "missing required configuration is actionable" {
@@ -110,7 +110,7 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
 @test "doctor succeeds with mocked dependencies" {
   run "$HELPER" doctor
   [ "$status" -eq 0 ]
-  [[ "$output" == *"doctor passed"* ]]
+  [[ "$output" == *"environment check passed"* ]]
 }
 
 @test "SSH connection failure is reported" {
@@ -135,12 +135,12 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   ! grep -q -- '--delete' "$BATS_TEST_TMPDIR/rsync.args"
 }
 
-@test "files-only pull works without protect-args for legacy-safe paths" {
+@test "files-only download works without protect-args for compatibility-safe paths" {
   export FAKE_RSYNC_NO_PROTECT_ARGS=1
   run "$HELPER" pull-files
   [ "$status" -eq 0 ]
   ! grep -q -- '--protect-args' "$BATS_TEST_TMPDIR/rsync.args"
-  [[ "$output" == *"legacy-safe path mode"* ]]
+  [[ "$output" == *"compatibility-safe path mode"* ]]
   grep -q '/webroot/storage/public/' "$BATS_TEST_TMPDIR/rsync.args"
 }
 
@@ -149,7 +149,7 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   run "$HELPER" push-db
   [ "$status" -eq 0 ]
   [[ "$output" == *"WARNING: This will write local"* ]]
-  [[ "$output" == *"Database push succeeded"* ]]
+  [[ "$output" == *"Database upload completed"* ]]
 }
 
 @test "files-only push invokes rsync without remote deletion" {
@@ -186,7 +186,7 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   run "$HELPER" pull-db
   [ "$status" -ne 0 ]
   [ ! -e "$TEST_ROOT/.ddev/.downloads/db.sql.gz" ]
-  [[ "$output" == *"local database has not been imported"* ]]
+  [[ "$output" == *"Could not download the Amezmo database"* ]]
 }
 
 @test "rsync failure warns about partial local files" {
@@ -227,7 +227,7 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   export AMEZMO_APP_TYPE=wordpress
   run "$HELPER" doctor
   [ "$status" -eq 0 ]
-  [[ "$output" == *"doctor passed"* ]]
+  [[ "$output" == *"environment check passed"* ]]
 }
 
 @test "custom adapter requires explicit read-only commands" {
@@ -281,7 +281,7 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
 @test "remote shell injection syntax is rejected" {
   AMEZMO_REMOTE_FILES_PATH='/webroot/storage;touch /tmp/bad' run "$HELPER" pull-files
   [ "$status" -ne 0 ]
-  [[ "$output" == *"unsafe shell characters"* ]]
+  [[ "$output" == *"characters that cannot be used safely in an Amezmo path"* ]]
 }
 
 @test "database import failure remains DDEV framework responsibility" {

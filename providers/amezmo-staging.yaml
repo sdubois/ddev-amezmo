@@ -1,5 +1,5 @@
 #ddev-generated
-# Amezmo staging provider. Pushes can overwrite remote data. Every connection value is independent;
+# Amezmo staging environment provider. Uploads can overwrite data. Every connection value is independent;
 # shared-container plans may repeat production's SSH values, while isolated
 # plans may use a different host and port.
 

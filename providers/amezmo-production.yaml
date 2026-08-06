@@ -1,5 +1,5 @@
 #ddev-generated
-# Amezmo production provider. Pushes can overwrite remote data. Edit the matching environment profile
+# Amezmo production environment provider. Uploads can overwrite data. Edit the matching environment profile
 # under .ddev/amezmo/environments and remove its ddev-generated marker after
 # customization so an add-on upgrade will not overwrite it.
 

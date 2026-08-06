@@ -243,6 +243,85 @@ pull_files() {
   printf 'Files pull succeeded.\n'
 }
 
+push_warning() {
+  printf '\nWARNING: This will write local %s data to the remote Amezmo %s environment at %s:%s.\n' \
+    "${AMEZMO_APP_TYPE:-application}" "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT" >&2
+  printf 'It can overwrite important remote database rows or files. Confirm the DDEV push prompt only if this target and local data are correct.\n\n' >&2
+}
+
+push_db() {
+  require_command ssh
+  validate_ssh_config
+  validate_app_type
+  validate_remote_path AMEZMO_REMOTE_APP_ROOT
+  local app_root="${DDEV_APPROOT:-$PWD}" dump_file remote_cli
+  dump_file="${app_root}/.ddev/.downloads/db.sql.gz"
+  [[ -s "$dump_file" ]] || die "local database dump was not found at $dump_file. DDEV should create it before db_push_command runs."
+  gzip -t "$dump_file" || die "local database dump is not valid gzip: $dump_file"
+  push_warning
+
+  case "$AMEZMO_APP_TYPE" in
+    drupal)
+      remote_cli="${AMEZMO_REMOTE_CLI_PATH:-vendor/bin/drush}"
+      if [[ -n "${AMEZMO_REMOTE_CLI_PATH:-}" ]]; then
+        validate_cli_path AMEZMO_REMOTE_CLI_PATH
+      fi
+      printf 'Pushing local database to %s (%s) with Drush...\n' "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
+      gzip -dc "$dump_file" | remote_command "cd $(shell_quote "$AMEZMO_REMOTE_APP_ROOT") && $(shell_quote "$remote_cli") sql:cli" \
+        || die "remote Drupal database import failed. Verify AMEZMO_REMOTE_CLI_PATH and the target environment."
+      ;;
+    wordpress)
+      remote_cli="${AMEZMO_REMOTE_CLI_PATH:-wp}"
+      if [[ -n "${AMEZMO_REMOTE_CLI_PATH:-}" ]]; then
+        validate_cli_path AMEZMO_REMOTE_CLI_PATH
+      fi
+      printf 'Pushing local database to %s (%s) with WP-CLI...\n' "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
+      gzip -dc "$dump_file" | remote_command "cd $(shell_quote "$AMEZMO_REMOTE_APP_ROOT") && $(shell_quote "$remote_cli") db import -" \
+        || die "remote WordPress database import failed. Verify AMEZMO_REMOTE_CLI_PATH and the target environment."
+      ;;
+    custom)
+      validate_command AMEZMO_REMOTE_DB_IMPORT_COMMAND
+      printf 'Pushing local database to %s (%s) with the configured import command...\n' "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
+      gzip -dc "$dump_file" | remote_command "cd $(shell_quote "$AMEZMO_REMOTE_APP_ROOT") && $AMEZMO_REMOTE_DB_IMPORT_COMMAND" \
+        || die "configured remote database import command failed."
+      ;;
+  esac
+  printf 'Database push succeeded.\n'
+}
+
+push_files() {
+  require_command ssh
+  require_command rsync
+  validate_ssh_config
+  validate_remote_path AMEZMO_REMOTE_FILES_PATH
+  validate_local_path
+  local app_root="${DDEV_APPROOT:-$PWD}" source
+  local -a rsync_args=( -rlptz --safe-links )
+  source="$app_root/$AMEZMO_LOCAL_FILES_PATH"
+  [[ -d "$source" ]] || die "local files directory was not found at $source"
+  push_warning
+  if rsync_supports_protect_args; then
+    rsync_args+=(--protect-args)
+  else
+    validate_legacy_rsync_paths
+    printf 'Installed rsync does not support --protect-args; using legacy-safe path mode.\n' >&2
+  fi
+  printf 'Pushing files from %s to %s:%s (no remote deletion)...\n' "$AMEZMO_LOCAL_FILES_PATH" "$AMEZMO_SSH_HOST" "$AMEZMO_REMOTE_FILES_PATH"
+  rsync_args+=(
+    --no-owner --no-group \
+    --exclude='/.git/' --exclude='/.env' --exclude='/.env.*' \
+    --exclude='*.sql' --exclude='*.sql.gz' --exclude='/logs/' \
+    --exclude='/log/' --exclude='/cache/' --exclude='/release/' \
+    -e "ssh -p ${AMEZMO_SSH_PORT} -o BatchMode=yes"
+  )
+  rsync_args+=(
+    "$source/" "$(ssh_target):${AMEZMO_REMOTE_FILES_PATH%/}/"
+  )
+  rsync "${rsync_args[@]}" \
+    || die "rsync push failed; remote files may have been partially updated. Check AMEZMO_REMOTE_FILES_PATH and remote rsync availability."
+  printf 'Files push succeeded.\n'
+}
+
 doctor() {
   require_command ssh
   require_command rsync
@@ -298,5 +377,7 @@ case "${1:-}" in
   pull-db) pull_db ;;
   pull-files) pull_files ;;
   doctor) doctor ;;
-  *) die "unknown action '${1:-}'. Expected info, auth, pull-db, pull-files, or doctor." ;;
+  push-db) push_db ;;
+  push-files) push_files ;;
+  *) die "unknown action '${1:-}'. Expected info, auth, pull-db, pull-files, push-db, push-files, or doctor." ;;
 esac

@@ -28,14 +28,27 @@ setup() {
   grep -q '^removal_actions:' "$BATS_TEST_DIRNAME/../install.yaml"
 }
 
-@test "provider is pull-only and delegates skips to DDEV" {
+@test "provider declares pull and push commands and delegates skips to DDEV" {
   for provider in "$BATS_TEST_DIRNAME"/../providers/amezmo-*.yaml; do
     grep -q '^db_pull_command:' "$provider"
     grep -q '^files_import_command:' "$provider"
-    ! grep -q '_push_command:' "$provider"
+    grep -q '^db_push_command:' "$provider"
+    grep -q '^files_push_command:' "$provider"
   done
   grep -q -- '--skip-db' "$BATS_TEST_DIRNAME/../README.md"
   grep -q -- '--skip-files' "$BATS_TEST_DIRNAME/../README.md"
+}
+
+@test "amezmo push delegates the named environment and flags to DDEV" {
+  mkdir -p "$TEST_ROOT/.ddev/providers"
+  : > "$TEST_ROOT/.ddev/providers/amezmo-production.yaml"
+  make_fake ddev '#!/usr/bin/env bash
+printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
+
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" push production --skip-db -y
+  [ "$status" -eq 0 ]
+  grep -q '^push amezmo-production --skip-db -y$' "$BATS_TEST_TMPDIR/ddev.args"
+  [[ "$output" == *"ddev push will write local database/files to Amezmo environment production"* ]]
 }
 
 @test "generated profiles keep environments and Drush aliases independent" {
@@ -131,6 +144,25 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   grep -q '/webroot/storage/public/' "$BATS_TEST_TMPDIR/rsync.args"
 }
 
+@test "database-only push imports the DDEV handoff dump remotely" {
+  printf '%s\n' 'CREATE TABLE local_test (id int);' | gzip > "$TEST_ROOT/.ddev/.downloads/db.sql.gz"
+  run "$HELPER" push-db
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WARNING: This will write local"* ]]
+  [[ "$output" == *"Database push succeeded"* ]]
+}
+
+@test "files-only push invokes rsync without remote deletion" {
+  mkdir -p "$TEST_ROOT/web/sites/default/files"
+  run "$HELPER" push-files
+  [ "$status" -eq 0 ]
+  grep -q -- '--protect-args' "$BATS_TEST_TMPDIR/rsync.args"
+  grep -q "$TEST_ROOT/web/sites/default/files/" "$BATS_TEST_TMPDIR/rsync.args"
+  grep -q '/webroot/storage/public/' "$BATS_TEST_TMPDIR/rsync.args"
+  ! grep -q -- '--delete' "$BATS_TEST_TMPDIR/rsync.args"
+  [[ "$output" == *"WARNING: This will write local"* ]]
+}
+
 @test "legacy rsync rejects paths that need protected arguments" {
   export FAKE_RSYNC_NO_PROTECT_ARGS=1
   AMEZMO_REMOTE_FILES_PATH='/webroot/storage/public files' run "$HELPER" pull-files
@@ -204,6 +236,15 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   run "$HELPER" doctor
   [ "$status" -ne 0 ]
   [[ "$output" == *"AMEZMO_REMOTE_HEALTH_COMMAND is empty"* ]]
+}
+
+@test "custom database push requires an explicit import command" {
+  export AMEZMO_APP_TYPE=custom
+  unset AMEZMO_REMOTE_DB_IMPORT_COMMAND
+  printf '%s\n' 'CREATE TABLE local_test (id int);' | gzip > "$TEST_ROOT/.ddev/.downloads/db.sql.gz"
+  run "$HELPER" push-db
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"AMEZMO_REMOTE_DB_IMPORT_COMMAND is empty"* ]]
 }
 
 @test "unknown application adapter is rejected" {

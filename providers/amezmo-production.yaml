@@ -1,5 +1,5 @@
 #ddev-generated
-# Amezmo production pull-only provider. Edit the matching environment profile
+# Amezmo production provider. Pushes can overwrite remote data. Edit the matching environment profile
 # under .ddev/amezmo/environments and remove its ddev-generated marker after
 # customization so an add-on upgrade will not overwrite it.
 
@@ -23,4 +23,12 @@ files_import_command:
   command: |
     "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile production pull-files
 
-# Push actions are intentionally absent. This add-on never writes to Amezmo.
+db_push_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile production push-db
+
+files_push_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile production push-files

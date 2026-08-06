@@ -1,5 +1,5 @@
 #ddev-generated
-# Amezmo staging pull-only provider. Every connection value is independent;
+# Amezmo staging provider. Pushes can overwrite remote data. Every connection value is independent;
 # shared-container plans may repeat production's SSH values, while isolated
 # plans may use a different host and port.
 
@@ -23,4 +23,12 @@ files_import_command:
   command: |
     "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile staging pull-files
 
-# Push actions are intentionally absent. This add-on never writes to Amezmo.
+db_push_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile staging push-db
+
+files_push_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile staging push-files

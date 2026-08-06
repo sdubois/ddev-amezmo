@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
 #ddev-generated
-## Description: Pull or validate a named Amezmo environment
-## Usage: amezmo <pull|doctor> <environment> [flags]
+## Description: Pull, push, or validate a named Amezmo environment
+## Usage: amezmo <pull|push|doctor> <environment> [flags]
 ## Example: "ddev amezmo pull production"
 
 set -Eeuo pipefail
+
+print_push_warning() {
+  local profile_file="${DDEV_APPROOT}/.ddev/amezmo/environments/${environment}.env"
+  if [[ -r "$profile_file" ]]; then
+    # shellcheck disable=SC1090
+    source "$profile_file"
+  fi
+  printf '\nWARNING: ddev push will write local database/files to Amezmo environment %s at %s:%s.\n' \
+    "${AMEZMO_ENVIRONMENT:-$environment}" "${AMEZMO_SSH_HOST:-<unconfigured-host>}" "${AMEZMO_SSH_PORT:-<unconfigured-port>}" >&2
+  printf 'This may overwrite important remote data. Verify the target and local data before confirming.\n\n' >&2
+}
 
 action="${1:-}"
 environment="${2:-}"
@@ -31,8 +42,18 @@ case "$action" in
     shift 2
     exec ddev pull "amezmo-${environment}" "$@"
     ;;
+  push)
+    provider="${DDEV_APPROOT}/.ddev/providers/amezmo-${environment}.yaml"
+    if [[ ! -r "$provider" ]]; then
+      echo "ddev-amezmo: provider for environment '$environment' was not found at $provider." >&2
+      exit 1
+    fi
+    print_push_warning
+    shift 2
+    exec ddev push "amezmo-${environment}" "$@"
+    ;;
   *)
-    echo "Usage: ddev amezmo <pull|doctor> <environment> [flags]" >&2
+    echo "Usage: ddev amezmo <pull|push|doctor> <environment> [flags]" >&2
     exit 2
     ;;
 esac

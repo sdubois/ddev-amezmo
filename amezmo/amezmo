@@ -17,21 +17,6 @@ load_profile() {
   [[ "${AMEZMO_ENVIRONMENT:-}" == "$profile" ]] \
     || die "profile $profile_file must set AMEZMO_ENVIRONMENT=$profile."
 
-  local password_key="${AMEZMO_DB_PASSWORD_VARIABLE:-}"
-  [[ "$password_key" =~ ^[A-Z][A-Z0-9_]*$ ]] \
-    || die "profile $profile_file must set AMEZMO_DB_PASSWORD_VARIABLE to a valid environment variable name."
-}
-
-resolve_db_password() {
-  local password_key="${AMEZMO_DB_PASSWORD_VARIABLE:-AMEZMO_DB_PASSWORD}" discovered_password
-  if [[ -z "${AMEZMO_DB_PASSWORD:-}" ]]; then
-    AMEZMO_DB_PASSWORD="${!password_key:-}"
-  fi
-  if [[ -z "$AMEZMO_DB_PASSWORD" ]] && command -v ddev >/dev/null 2>&1; then
-    discovered_password="$(ddev exec -s web printenv "$password_key" 2>/dev/null || true)"
-    AMEZMO_DB_PASSWORD="$discovered_password"
-  fi
-  export AMEZMO_DB_PASSWORD
 }
 
 die() {
@@ -91,17 +76,11 @@ validate_ssh_config() {
   validate_port AMEZMO_SSH_PORT
 }
 
-validate_db_config() {
-  local key
-  resolve_db_password
-  for key in AMEZMO_DB_HOST AMEZMO_DB_PORT AMEZMO_DB_NAME AMEZMO_DB_USER AMEZMO_DB_PASSWORD; do
-    require_value "$key"
-  done
-  validate_token AMEZMO_DB_HOST
-  validate_port AMEZMO_DB_PORT
-  validate_token AMEZMO_DB_NAME
-  validate_token AMEZMO_DB_USER
-  [[ "$AMEZMO_DB_PASSWORD" != *$'\n'* && "$AMEZMO_DB_PASSWORD" != *$'\r'* ]] || die "AMEZMO_DB_PASSWORD may not contain a newline."
+validate_drush_alias() {
+  require_value AMEZMO_DRUSH_ALIAS
+  local alias="${AMEZMO_DRUSH_ALIAS#@}"
+  [[ "$alias" =~ ^[A-Za-z0-9._-]+$ ]] \
+    || die "AMEZMO_DRUSH_ALIAS contains unsupported characters. Use a Drush alias name such as live or staging."
 }
 
 ssh_target() {
@@ -117,33 +96,29 @@ shell_quote() {
   printf "'%s'" "${1//\'/\'\\\'\'}"
 }
 
-mysql_option_escape() {
-  local value="$1"
-  value="${value//\\/\\\\}"
-  value="${value//\"/\\\"}"
-  printf '%s' "$value"
+local_drush_path() {
+  local app_root="${DDEV_APPROOT:-$PWD}"
+  printf '%s/vendor/bin/drush' "$app_root"
 }
 
-make_remote_db_script() {
-  local destination="$1" mode="$2" escaped_password
-  escaped_password="$(mysql_option_escape "$AMEZMO_DB_PASSWORD")"
-  {
-    # These deliberately single-quoted strings generate a script for the remote shell.
-    # shellcheck disable=SC2016
-    printf '%s\n' 'set -eu' 'umask 077' 'credential_file=$(mktemp "${TMPDIR:-/tmp}/ddev-amezmo.XXXXXX")' 'cleanup() { rm -f "$credential_file"; }' 'trap cleanup EXIT HUP INT TERM'
-    # shellcheck disable=SC2016
-    printf 'cat >"$credential_file" <<\047DDEV_AMEZMO_CREDENTIALS\047\n[client]\npassword="%s"\nDDEV_AMEZMO_CREDENTIALS\n' "$escaped_password"
-    if [[ "$mode" == "dump" ]]; then
-      # shellcheck disable=SC2016
-      printf 'mysqldump --defaults-extra-file="$credential_file" --host=%s --port=%s --user=%s --single-transaction --quick --skip-lock-tables --default-character-set=utf8mb4 -- %s\n' \
-        "$(shell_quote "$AMEZMO_DB_HOST")" "$(shell_quote "$AMEZMO_DB_PORT")" "$(shell_quote "$AMEZMO_DB_USER")" "$(shell_quote "$AMEZMO_DB_NAME")"
-    else
-      # shellcheck disable=SC2016
-      printf 'mysql --defaults-extra-file="$credential_file" --host=%s --port=%s --user=%s --database=%s --batch --skip-column-names --execute=%s >/dev/null\n' \
-        "$(shell_quote "$AMEZMO_DB_HOST")" "$(shell_quote "$AMEZMO_DB_PORT")" "$(shell_quote "$AMEZMO_DB_USER")" "$(shell_quote "$AMEZMO_DB_NAME")" "$(shell_quote 'SELECT 1')"
-    fi
-  } > "$destination"
-  chmod 600 "$destination"
+validate_local_drush() {
+  local drush_path
+  drush_path="$(local_drush_path)"
+  [[ -x "$drush_path" ]] \
+    || die "local Drush executable was not found at $drush_path. Run this from a consuming project with vendor/bin/drush installed."
+}
+
+rsync_supports_protect_args() {
+  rsync --help 2>&1 | grep -Fq -- '--protect-args'
+}
+
+validate_legacy_rsync_paths() {
+  local key value
+  for key in AMEZMO_REMOTE_FILES_PATH AMEZMO_LOCAL_FILES_PATH; do
+    value="${!key}"
+    [[ "$value" =~ ^[A-Za-z0-9_./@+-]+$ ]] || die \
+      "installed rsync does not support --protect-args; $key must contain only letters, numbers, underscore, dot, slash, at-sign, plus, or hyphen. Upgrade rsync to use paths with spaces or other special characters."
+  done
 }
 
 auth() {
@@ -161,23 +136,25 @@ info() {
 
 pull_db() {
   require_command ssh
-  require_command gzip
   validate_ssh_config
-  validate_db_config
-  local app_root="${DDEV_APPROOT:-$PWD}" download_dir tmp_dir remote_script dump_file
+  validate_remote_path AMEZMO_REMOTE_APP_ROOT
+  validate_drush_alias
+  validate_local_drush
+  local app_root="${DDEV_APPROOT:-$PWD}" download_dir tmp_dir dump_file drush_alias drush_path
+  drush_path="$(local_drush_path)"
+  drush_alias="@${AMEZMO_DRUSH_ALIAS#@}"
   download_dir="${app_root}/.ddev/.downloads"
   mkdir -p "$download_dir"
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/ddev-amezmo.XXXXXX")"
-  remote_script="$tmp_dir/remote-db.sh"
   dump_file="$tmp_dir/db.sql.gz"
   cleanup() { rm -rf "$tmp_dir"; }
   trap cleanup EXIT HUP INT TERM
-  make_remote_db_script "$remote_script" dump
-  printf 'Streaming database %s from %s (%s)...\n' "$AMEZMO_DB_NAME" "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
-  if ! ssh -p "$AMEZMO_SSH_PORT" -o BatchMode=yes "$(ssh_target)" sh -s < "$remote_script" | gzip > "$dump_file"; then
-    die "remote database dump failed; the local database has not been imported. Verify mysqldump and the AMEZMO_DB_* settings."
+  printf 'Streaming database via local Drush alias @%s to %s (%s)...\n' "${AMEZMO_DRUSH_ALIAS#@}" "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
+  if ! (cd "$app_root" && "$drush_path" "$drush_alias" sql:dump --gzip --no-interaction > "$dump_file" 2>"$tmp_dir/drush.stderr"); then
+    die "Drush database dump failed; the local database has not been imported. Verify the Drush alias and remote Drupal environment."
   fi
   [[ -s "$dump_file" ]] || die "remote database dump was empty; the local database has not been imported."
+  gzip -t "$dump_file" || die "Drush database dump was not valid gzip; the local database has not been imported."
   mv "$dump_file" "$download_dir/db.sql.gz"
   printf 'Database dump downloaded; DDEV will now import it.\n'
   cleanup
@@ -191,16 +168,27 @@ pull_files() {
   validate_remote_path AMEZMO_REMOTE_FILES_PATH
   validate_local_path
   local app_root="${DDEV_APPROOT:-$PWD}" destination
+  local -a rsync_args=( -rlptz --safe-links )
   destination="$app_root/$AMEZMO_LOCAL_FILES_PATH"
   mkdir -p "$destination"
+  if rsync_supports_protect_args; then
+    rsync_args+=(--protect-args)
+  else
+    validate_legacy_rsync_paths
+    printf 'Installed rsync does not support --protect-args; using legacy-safe path mode.\n' >&2
+  fi
   printf 'Pulling files from %s:%s into %s (no remote writes, no deletion)...\n' "$AMEZMO_SSH_HOST" "$AMEZMO_REMOTE_FILES_PATH" "$AMEZMO_LOCAL_FILES_PATH"
-  rsync -rlptz --safe-links --protect-args \
+  rsync_args+=(
     --no-owner --no-group \
     --exclude='/.git/' --exclude='/.env' --exclude='/.env.*' \
     --exclude='*.sql' --exclude='*.sql.gz' --exclude='/logs/' \
     --exclude='/log/' --exclude='/cache/' --exclude='/release/' \
-    -e "ssh -p ${AMEZMO_SSH_PORT} -o BatchMode=yes" \
-    "$(ssh_target):${AMEZMO_REMOTE_FILES_PATH%/}/" "$destination/" \
+    -e "ssh -p ${AMEZMO_SSH_PORT} -o BatchMode=yes"
+  )
+  rsync_args+=(
+    "$(ssh_target):${AMEZMO_REMOTE_FILES_PATH%/}/" "$destination/"
+  )
+  rsync "${rsync_args[@]}" \
     || die "rsync failed; local files may have been partially updated. Check AMEZMO_REMOTE_FILES_PATH and remote rsync availability."
   printf 'Files pull succeeded.\n'
 }
@@ -212,24 +200,22 @@ doctor() {
   validate_remote_path AMEZMO_REMOTE_APP_ROOT
   validate_remote_path AMEZMO_REMOTE_FILES_PATH
   validate_local_path
-  validate_db_config
+  validate_drush_alias
+  validate_local_drush
   ssh_check
-  local quoted_app quoted_files tmp_dir remote_script
+  local quoted_app quoted_files quoted_drush drush_alias drush_path
   quoted_app="$(shell_quote "$AMEZMO_REMOTE_APP_ROOT")"
   quoted_files="$(shell_quote "$AMEZMO_REMOTE_FILES_PATH")"
+  quoted_drush="$(shell_quote "$AMEZMO_REMOTE_APP_ROOT/vendor/bin/drush")"
   ssh -p "$AMEZMO_SSH_PORT" -o BatchMode=yes "$(ssh_target)" \
-    "test -d $quoted_app && test -r $quoted_app && test -d $quoted_files && test -r $quoted_files && command -v mysqldump >/dev/null && command -v mysql >/dev/null && command -v rsync >/dev/null" \
-    || die "remote checks failed. Verify both remote paths are readable and mysql, mysqldump, and rsync are installed on the Amezmo instance."
-  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/ddev-amezmo-doctor.XXXXXX")"
-  remote_script="$tmp_dir/remote-db.sh"
-  cleanup() { rm -rf "$tmp_dir"; }
-  trap cleanup EXIT HUP INT TERM
-  make_remote_db_script "$remote_script" check
-  ssh -p "$AMEZMO_SSH_PORT" -o BatchMode=yes "$(ssh_target)" sh -s < "$remote_script" >/dev/null \
-    || die "database connectivity failed. Verify AMEZMO_DB_HOST, AMEZMO_DB_PORT, AMEZMO_DB_NAME, AMEZMO_DB_USER, and the local secret AMEZMO_DB_PASSWORD."
+    "test -d $quoted_app && test -r $quoted_app && test -d $quoted_files && test -r $quoted_files && test -x $quoted_drush && command -v rsync >/dev/null" \
+    || die "remote checks failed. Verify both remote paths are readable, vendor/bin/drush is available, and rsync is installed on the Amezmo instance."
+  drush_alias="@${AMEZMO_DRUSH_ALIAS#@}"
+  drush_path="$(local_drush_path)"
+  if ! (cd "${DDEV_APPROOT:-$PWD}" && "$drush_path" "$drush_alias" status --no-interaction >/dev/null 2>/dev/null); then
+    die "Drush database connectivity failed. Verify AMEZMO_DRUSH_ALIAS and the configured remote site alias."
+  fi
   printf 'Amezmo doctor passed for %s at %s:%s. Local files target: %s\n' "${AMEZMO_ENVIRONMENT:-production}" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT" "$AMEZMO_LOCAL_FILES_PATH"
-  cleanup
-  trap - EXIT HUP INT TERM
 }
 
 if [[ "${1:-}" == "--profile" ]]; then

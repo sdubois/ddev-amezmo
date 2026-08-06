@@ -38,16 +38,16 @@ setup() {
   grep -q -- '--skip-files' "$BATS_TEST_DIRNAME/../README.md"
 }
 
-@test "generated profiles keep environments and password names independent" {
+@test "generated profiles keep environments and Drush aliases independent" {
   production="$BATS_TEST_DIRNAME/../amezmo/environments/production.env"
   staging="$BATS_TEST_DIRNAME/../amezmo/environments/staging.env"
   grep -q '#ddev-generated' "$production"
   grep -q 'AMEZMO_ENVIRONMENT=production' "$production"
-  grep -q 'AMEZMO_PRODUCTION_DB_PASSWORD' "$production"
+  grep -q 'AMEZMO_DRUSH_ALIAS=live' "$production"
   grep -q 'AMEZMO_ENVIRONMENT=staging' "$staging"
-  grep -q 'AMEZMO_STAGING_DB_PASSWORD' "$staging"
-  ! grep -q '^export AMEZMO_DB_PASSWORD=' "$production"
-  ! grep -q '^export AMEZMO_DB_PASSWORD=' "$staging"
+  grep -q 'AMEZMO_DRUSH_ALIAS=staging' "$staging"
+  ! grep -q 'AMEZMO_DB_' "$production"
+  ! grep -q 'AMEZMO_DB_' "$staging"
 }
 
 @test "named profile loads its own complete configuration" {
@@ -58,11 +58,8 @@ setup() {
     -e 's/^export AMEZMO_SSH_PORT=.*/export AMEZMO_SSH_PORT=2201/' \
     -e 's|^export AMEZMO_REMOTE_FILES_PATH=.*|export AMEZMO_REMOTE_FILES_PATH=/webroot/storage/public|' \
     -e 's|^export AMEZMO_LOCAL_FILES_PATH=.*|export AMEZMO_LOCAL_FILES_PATH=web/sites/default/files|' \
-    -e 's/^export AMEZMO_DB_NAME=.*/export AMEZMO_DB_NAME=production_db/' \
-    -e 's/^export AMEZMO_DB_USER=.*/export AMEZMO_DB_USER=production_user/' \
+    -e 's/^export AMEZMO_DRUSH_ALIAS=.*/export AMEZMO_DRUSH_ALIAS=live/' \
     "$BATS_TEST_DIRNAME/../amezmo/environments/production.env" > "$profile_dir/production.env"
-  export AMEZMO_PRODUCTION_DB_PASSWORD=profile-secret
-
   run "$HELPER" --profile production doctor
   [ "$status" -eq 0 ]
   [[ "$output" == *"production at production.example.test:2201"* ]]
@@ -120,8 +117,27 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
 @test "files-only pull invokes rsync without delete" {
   run "$HELPER" pull-files
   [ "$status" -eq 0 ]
+  grep -q -- '--protect-args' "$BATS_TEST_TMPDIR/rsync.args"
   grep -q '/webroot/storage/public/' "$BATS_TEST_TMPDIR/rsync.args"
   ! grep -q -- '--delete' "$BATS_TEST_TMPDIR/rsync.args"
+}
+
+@test "files-only pull works without protect-args for legacy-safe paths" {
+  export FAKE_RSYNC_NO_PROTECT_ARGS=1
+  run "$HELPER" pull-files
+  [ "$status" -eq 0 ]
+  ! grep -q -- '--protect-args' "$BATS_TEST_TMPDIR/rsync.args"
+  [[ "$output" == *"legacy-safe path mode"* ]]
+  grep -q '/webroot/storage/public/' "$BATS_TEST_TMPDIR/rsync.args"
+}
+
+@test "legacy rsync rejects paths that need protected arguments" {
+  export FAKE_RSYNC_NO_PROTECT_ARGS=1
+  AMEZMO_REMOTE_FILES_PATH='/webroot/storage/public files' run "$HELPER" pull-files
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"does not support --protect-args"* ]]
+  [[ "$output" == *"AMEZMO_REMOTE_FILES_PATH"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/rsync.args" ]
 }
 
 @test "full pull building blocks both succeed" {
@@ -148,13 +164,27 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   [[ "$output" == *"partially updated"* ]]
 }
 
-@test "temporary database credentials are cleaned and secret stays out of output" {
-  export FAKE_CAPTURE="$BATS_TEST_TMPDIR/remote-script"
+@test "remote Drush dump uses the alias and stays compressed" {
   run "$HELPER" pull-db
   [ "$status" -eq 0 ]
-  [[ "$output" != *"$AMEZMO_DB_PASSWORD"* ]]
-  grep -q 'password=' "$FAKE_CAPTURE"
+  grep -q '^@staging sql:dump --gzip --no-interaction$' "$BATS_TEST_TMPDIR/drush.args"
+  [ ! -e "$BATS_TEST_TMPDIR/remote-script" ]
+  [[ "$output" != *"TTY mode requires /dev/tty"* ]]
+  gzip -t "$TEST_ROOT/.ddev/.downloads/db.sql.gz"
   [ -z "$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'ddev-amezmo.*' -type d -print -quit 2>/dev/null)" ]
+}
+
+@test "doctor uses local Drush while retaining direct SSH validation" {
+  run "$HELPER" doctor
+  [ "$status" -eq 0 ]
+  grep -q '^@staging status --no-interaction$' "$BATS_TEST_TMPDIR/drush.args"
+  [[ "$output" != *"TTY mode requires /dev/tty"* ]]
+}
+
+@test "unsafe Drush alias is rejected" {
+  AMEZMO_DRUSH_ALIAS='live;touch /tmp/bad' run "$HELPER" pull-db
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"AMEZMO_DRUSH_ALIAS contains unsupported characters"* ]]
 }
 
 @test "remote root path is rejected" {

@@ -6,7 +6,7 @@ setup_fixture() {
   export TMPDIR="$BATS_TEST_TMPDIR/tmp"
   export DDEV_APPROOT="$TEST_ROOT"
   export FAKE_BIN="$BATS_TEST_TMPDIR/bin"
-  mkdir -p "$TEST_ROOT/.ddev/.downloads" "$FAKE_BIN" "$TMPDIR"
+  mkdir -p "$TEST_ROOT/.ddev/.downloads" "$TEST_ROOT/vendor/bin" "$FAKE_BIN" "$TMPDIR"
   cp "$BATS_TEST_DIRNAME/../amezmo/amezmo" "$BATS_TEST_TMPDIR/amezmo"
   chmod +x "$BATS_TEST_TMPDIR/amezmo"
   export HELPER="$BATS_TEST_TMPDIR/amezmo"
@@ -16,14 +16,10 @@ setup_fixture() {
   export AMEZMO_SSH_PORT=2222
   export AMEZMO_SSH_USER=deployer
   export AMEZMO_REMOTE_APP_ROOT=/webroot/current
+  export AMEZMO_DRUSH_ALIAS=staging
   export AMEZMO_REMOTE_FILES_PATH=/webroot/storage/public
   export AMEZMO_LOCAL_FILES_PATH=web/sites/default/files
-  export AMEZMO_DB_HOST=127.0.0.1
-  export AMEZMO_DB_PORT=3306
-  export AMEZMO_DB_NAME=app_db
-  export AMEZMO_DB_USER=app_user
-  export AMEZMO_DB_PASSWORD='space $quote! and "double"'
-  unset FAKE_SSH_FAIL FAKE_DUMP_FAIL FAKE_RSYNC_FAIL FAKE_CAPTURE
+  unset FAKE_SSH_FAIL FAKE_DUMP_FAIL FAKE_RSYNC_FAIL FAKE_RSYNC_NO_PROTECT_ARGS FAKE_CAPTURE
 
   make_fake ssh '#!/usr/bin/env bash
 set -eu
@@ -32,15 +28,36 @@ if [[ "$*" == *"sh -s"* ]]; then
   input=$(mktemp)
   cat > "$input"
   if [[ -n "${FAKE_CAPTURE:-}" ]]; then cp "$input" "$FAKE_CAPTURE"; fi
-  if grep -q mysqldump "$input"; then
+  if grep -q "sql:dump" "$input"; then
     [[ "${FAKE_DUMP_FAIL:-}" != 1 ]] || exit 24
-    printf "%s\n" "CREATE TABLE test (id int);"
+    printf "%s\n" "CREATE TABLE test (id int);" | gzip
   fi
   rm -f "$input"
 fi'
   make_fake rsync '#!/usr/bin/env bash
+if [[ "${1:-}" == "--help" ]]; then
+  if [[ "${FAKE_RSYNC_NO_PROTECT_ARGS:-}" != 1 ]]; then
+    printf "%s\n" "  --protect-args           protect args from remote shell"
+  else
+    printf "%s\n" "  --safe-links             ignore unsafe symlinks"
+  fi
+  exit 0
+fi
 [[ "${FAKE_RSYNC_FAIL:-}" != 1 ]] || exit 25
 printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/rsync.args"'
+  make_fake drush '#!/usr/bin/env bash
+set -eu
+printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/drush.args"
+if [[ "$*" == *"sql:dump"* ]]; then
+  [[ "$*" == *"--no-interaction"* ]] || { printf "%s\n" "TTY mode requires /dev/tty to be read/writable." >&2; exit 26; }
+  [[ "${FAKE_DUMP_FAIL:-}" != 1 ]] || exit 24
+  printf "%s\n" "diagnostic output belongs on stderr" >&2
+  printf "%s\n" "CREATE TABLE test (id int);" | gzip
+elif [[ "$*" == *"status"* ]]; then
+  [[ "$*" == *"--no-interaction"* ]] || { printf "%s\n" "TTY mode requires /dev/tty to be read/writable." >&2; exit 26; }
+fi'
+  cp "$FAKE_BIN/drush" "$TEST_ROOT/vendor/bin/drush"
+  chmod +x "$TEST_ROOT/vendor/bin/drush"
 }
 
 make_fake() {

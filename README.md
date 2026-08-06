@@ -3,7 +3,7 @@
 
 # ddev-amezmo
 
-`ddev-amezmo` is a pull-only DDEV hosting-provider integration for PHP applications on [Amezmo](https://www.amezmo.com/). It installs independent production and staging profiles. Each profile uses its remote Drupal/Drush site alias to stream one compressed database dump into DDEV and uses `rsync` to copy one explicitly configured persistent-files directory into the local project.
+`ddev-amezmo` is a pull-only DDEV hosting-provider integration for CMS and framework applications on [Amezmo](https://www.amezmo.com/). It installs independent production and staging profiles. Shared transport handles SSH, database handoff, and `rsync` file pulls; each profile explicitly selects an application adapter for database and health checks.
 
 It never pushes, deploys, or changes remote data. There is deliberately no `ddev push amezmo` recipe.
 
@@ -19,8 +19,8 @@ The automated suite uses mocked SSH and does not prove compatibility with a live
 - Host `ssh` and `rsync` commands.
 - SSH enabled for the Amezmo instance, your public key uploaded, and your current IP allowed if trusted-IP restrictions are enabled.
 - The SSH hostname and allocated port shown in Amezmo's dashboard. Amezmo normally uses public-key authentication as `deployer`.
-- A remote `vendor/bin/drush` installation with a working site alias and `rsync`.
-- Explicit remote/local files paths and the corresponding Drush alias.
+- The application CLI or remote commands required by the selected adapter, plus `rsync`.
+- Explicit remote/local files paths and adapter settings.
 
 The add-on honors `~/.ssh/config`, `IdentityFile`, SSH agents, and normal `known_hosts` verification. It never disables host-key checking. If your key is available only through DDEV's agent, run `ddev auth ssh`; host SSH must still be able to use that agent.
 
@@ -46,19 +46,49 @@ Set these non-secret values independently in `.ddev/amezmo/environments/producti
 | Key | Required | Default | Purpose |
 |---|---:|---|---|
 | `AMEZMO_ENVIRONMENT` | Yes | Profile name | Environment label; must match the profile filename |
+| `AMEZMO_APP_TYPE` | No | `drupal` | `drupal`, `wordpress`, or `custom` |
 | `AMEZMO_SSH_HOST` | Yes | | Hostname or SSH config alias |
 | `AMEZMO_SSH_PORT` | Yes | | Allocated Amezmo SSH port |
 | `AMEZMO_SSH_USER` | Yes | `deployer` | SSH username |
 | `AMEZMO_REMOTE_APP_ROOT` | Doctor | Production: `/webroot/current` | Readable environment-specific deployed app directory |
-| `AMEZMO_DRUSH_ALIAS` | Database/doctor | Production: `live`; staging: `staging` | Remote Drush site alias, with or without the leading `@` |
+| `AMEZMO_DRUSH_ALIAS` | Drupal database/doctor | Production: `live`; staging: `staging` | Remote Drush site alias, with or without the leading `@` |
+| `AMEZMO_REMOTE_CLI_PATH` | WordPress database/doctor | `wp` | Remote CLI executable or absolute path |
+| `AMEZMO_REMOTE_DB_DUMP_COMMAND` | Custom database | | Project-owned command that writes SQL to stdout |
+| `AMEZMO_REMOTE_HEALTH_COMMAND` | Custom doctor | | Project-owned read-only health command |
 | `AMEZMO_REMOTE_FILES_PATH` | Files | | Persistent remote source |
 | `AMEZMO_LOCAL_FILES_PATH` | Files | | Project-relative local target |
 
-Developer and Business plans commonly use the same SSH endpoint for production and staging but different environment roots and Drush aliases. Repeat the shared SSH values in both profiles and enter each environment's explicit paths and alias. Do not calculate the staging root from the production path.
+Developer and Business plans commonly use the same SSH endpoint for production and staging but different environment roots and application settings. Repeat the shared SSH values in both profiles and enter each environment's explicit paths and adapter configuration. Do not calculate the staging root from the production path.
 
-Advanced environments are isolated. Treat each as a complete profile: SSH host, SSH port, paths, and Drush alias may all differ. See **Custom environments** below.
+Advanced environments are isolated. Treat each as a complete profile: SSH host, SSH port, paths, and application settings may all differ. See **Custom environments** below.
 
-Profiles from the previous release need a small migration: remove the `AMEZMO_DB_HOST`, `AMEZMO_DB_PORT`, `AMEZMO_DB_NAME`, `AMEZMO_DB_USER`, and `AMEZMO_DB_PASSWORD_VARIABLE` lines, then add the environment's `AMEZMO_DRUSH_ALIAS`. Existing database passwords are no longer needed by this add-on.
+Profiles from the previous release continue to work as Drupal profiles because an omitted `AMEZMO_APP_TYPE` defaults to `drupal`. New profiles should set it explicitly. Remove the old `AMEZMO_DB_*` lines; Drupal profiles use `AMEZMO_DRUSH_ALIAS`, while WordPress and custom profiles use their adapter settings below.
+
+### Application adapters
+
+Drupal profiles use the consuming project's local `vendor/bin/drush` and its configured site alias:
+
+```dotenv
+export AMEZMO_APP_TYPE=drupal
+export AMEZMO_DRUSH_ALIAS=live
+```
+
+WordPress profiles execute WP-CLI in the remote application directory. The default command is `wp`; set `AMEZMO_REMOTE_CLI_PATH` when the Amezmo installation uses another path:
+
+```dotenv
+export AMEZMO_APP_TYPE=wordpress
+export AMEZMO_REMOTE_CLI_PATH=wp
+```
+
+Custom profiles support other Amezmo-supported CMSs and frameworks by supplying read-only remote commands. `AMEZMO_REMOTE_DB_DUMP_COMMAND` must write an uncompressed SQL dump to stdout, and `AMEZMO_REMOTE_HEALTH_COMMAND` must exit successfully when the application/database is healthy:
+
+```dotenv
+export AMEZMO_APP_TYPE=custom
+export AMEZMO_REMOTE_DB_DUMP_COMMAND='php artisan db:dump --stdout'
+export AMEZMO_REMOTE_HEALTH_COMMAND='php artisan about >/dev/null'
+```
+
+These commands are deliberately project-owned configuration and run after SSH as the configured deployment user in `AMEZMO_REMOTE_APP_ROOT`. Do not put secrets in them; use the application's existing environment/configuration.
 
 After editing the profiles, restart so DDEV loads the environment:
 
@@ -95,7 +125,7 @@ ddev amezmo pull staging --skip-files
 ddev amezmo pull production -y
 ```
 
-The Amezmo command delegates pulls to DDEV's provider framework. DDEV still owns the confirmation prompt, `-y`, `--skip-db`, `--skip-files`, and `--environment` behavior. `doctor` is read-only: it checks local tools, configuration, SSH, remote directories/tools, and a `SELECT 1` database connection.
+The Amezmo command delegates pulls to DDEV's provider framework. DDEV still owns the confirmation prompt, `-y`, `--skip-db`, `--skip-files`, and `--environment` behavior. `doctor` is read-only: it checks configuration, SSH, remote directories/tools, the selected adapter, and application/database connectivity.
 
 The underlying providers remain available as `ddev pull amezmo-production` and `ddev pull amezmo-staging`, but `ddev amezmo pull <environment>` is the recommended interface. DDEV does not support a second positional argument in `ddev pull`, so `ddev pull amezmo production` is not available.
 
@@ -103,7 +133,7 @@ The underlying providers remain available as `ddev pull amezmo-production` and `
 
 For an Advanced-plan environment such as `qa`:
 
-1. Copy `.ddev/amezmo/environments/staging.env` to `.ddev/amezmo/environments/qa.env` and set `AMEZMO_ENVIRONMENT=qa` plus all SSH, path, and Drush alias values.
+1. Copy `.ddev/amezmo/environments/staging.env` to `.ddev/amezmo/environments/qa.env` and set `AMEZMO_ENVIRONMENT=qa` plus all SSH, path, and adapter values.
 2. Copy `.ddev/providers/amezmo-staging.yaml` to `.ddev/providers/amezmo-qa.yaml` and replace each `--profile staging` with `--profile qa`.
 3. Run `ddev restart`, `ddev amezmo doctor qa`, and `ddev amezmo pull qa`.
 
@@ -111,15 +141,15 @@ Custom profile and provider files are project-owned and are not removed by add-o
 
 ## Credential protection and path safety
 
-Database credentials remain in the remote Drupal site's configuration and are never requested, copied, or printed locally. For a dump or database check, the helper invokes the consuming project's local `vendor/bin/drush` with the configured alias; Drush then performs its one intended remote connection. The compressed dump is staged in a private temporary directory and moved to DDEV's standard download handoff only after success.
+Database credentials remain in the remote application's configuration and are never requested, copied, or printed locally. Drupal uses the consuming project's local `vendor/bin/drush` alias; WordPress and custom adapters execute read-only commands over SSH in the remote application root. The compressed dump is staged in a private temporary directory and moved to DDEV's standard download handoff only after success.
 
-Connection and database identifiers are restricted to non-shell syntax. Remote paths must be absolute, non-root paths with a conservative character set. Local paths must be project-relative, non-root, and cannot contain `..`. When available, rsync `--protect-args` preserves safe handling for paths containing spaces and special characters. macOS's older openrsync/rsync 2.6.9 lacks that option, so the add-on detects support and uses a legacy-safe fallback only for paths containing letters, numbers, underscore, dot, slash, at-sign, plus, or hyphen; it fails clearly for other paths. OpenSSH argument arrays, quoting, and rsync's no-delete pull mode prevent configuration values from becoming shell commands.
+Connection and path identifiers are restricted to conservative syntax. Custom adapter commands are intentionally executable shell commands, so they must be treated as trusted project configuration and kept read-only. Remote paths must be absolute, non-root paths; local paths must be project-relative, non-root, and cannot contain `..`. When available, rsync `--protect-args` preserves safe handling for paths containing spaces and special characters. macOS's older openrsync/rsync 2.6.9 lacks that option, so the add-on detects support and uses a legacy-safe fallback only for paths containing letters, numbers, underscore, dot, slash, at-sign, plus, or hyphen; it fails clearly for other paths. SSH quoting and rsync's no-delete pull mode protect transport arguments.
 
 ## Troubleshooting
 
 - **SSH fails:** Confirm SSH is enabled, the dashboard port is current, your public key is installed, your IP is trusted, and accept the host key only after independently verifying it. Test the dashboard's SSH command directly.
-- **Doctor reports remote tools:** Amezmo must provide `vendor/bin/drush` under `AMEZMO_REMOTE_APP_ROOT` and `rsync` in the SSH session's `PATH`.
-- **Database fails:** Run `vendor/bin/drush @live status` or `vendor/bin/drush @staging status` in the consuming project to verify the alias and its remote Drupal database connection, then copy the alias name into the selected profile.
+- **Doctor reports remote tools:** Verify `rsync` and the selected adapter command in the SSH session. Drupal also needs a local `vendor/bin/drush`; WordPress needs remote WP-CLI; custom profiles need both configured commands.
+- **Database fails:** Run the selected adapter's read-only health command as the deployment user and verify the application root, CLI path, or alias in the selected profile.
 - **Files fail:** Verify the environment-specific storage directory in the Amezmo dashboard and ensure `deployer` can read it.
 - **Import fails after download:** DDEV may have partially replaced the local database. Correct the local DDEV/database issue and rerun the pull.
 - **Rsync fails midway:** Existing local files may be partially updated; this MVP does not stage an entire files tree before replacement.

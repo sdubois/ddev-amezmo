@@ -181,6 +181,38 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   [[ "$output" != *"TTY mode requires /dev/tty"* ]]
 }
 
+@test "WordPress adapter streams a remote WP-CLI dump" {
+  export AMEZMO_APP_TYPE=wordpress
+  export AMEZMO_REMOTE_CLI_PATH=wp
+  run "$HELPER" pull-db
+  [ "$status" -eq 0 ]
+  [ -s "$TEST_ROOT/.ddev/.downloads/db.sql.gz" ]
+  gzip -cd "$TEST_ROOT/.ddev/.downloads/db.sql.gz" | grep -q 'CREATE TABLE wordpress_test'
+  [[ "$output" == *"WP-CLI"* ]]
+}
+
+@test "WordPress adapter doctor uses the remote CLI" {
+  export AMEZMO_APP_TYPE=wordpress
+  run "$HELPER" doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"doctor passed"* ]]
+}
+
+@test "custom adapter requires explicit read-only commands" {
+  export AMEZMO_APP_TYPE=custom
+  unset AMEZMO_REMOTE_DB_DUMP_COMMAND AMEZMO_REMOTE_HEALTH_COMMAND
+  run "$HELPER" doctor
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"AMEZMO_REMOTE_HEALTH_COMMAND is empty"* ]]
+}
+
+@test "unknown application adapter is rejected" {
+  export AMEZMO_APP_TYPE=joomla
+  run "$HELPER" doctor
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"AMEZMO_APP_TYPE must be drupal, wordpress, or custom"* ]]
+}
+
 @test "unsafe Drush alias is rejected" {
   AMEZMO_DRUSH_ALIAS='live;touch /tmp/bad' run "$HELPER" pull-db
   [ "$status" -ne 0 ]

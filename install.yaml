@@ -20,7 +20,7 @@ post_install_actions:
   - |
     #ddev-description:Show Amezmo setup instructions
     chmod +x amezmo/amezmo commands/host/amezmo
-    echo "ddev-amezmo installed. Configure SSH, remote paths, and Drush aliases in .ddev/amezmo/environments/production.env and staging.env, restart DDEV, then run 'ddev amezmo doctor production' and 'ddev amezmo pull production'."
+    echo "ddev-amezmo installed. Configure the application adapter, SSH, and remote paths in .ddev/amezmo/environments/production.env and staging.env, restart DDEV, then run 'ddev amezmo doctor production' and 'ddev amezmo pull production'."
 
 removal_actions: []
 

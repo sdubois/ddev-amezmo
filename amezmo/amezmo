@@ -83,6 +83,28 @@ validate_drush_alias() {
     || die "AMEZMO_DRUSH_ALIAS contains unsupported characters. Use a Drush alias name such as live or staging."
 }
 
+validate_app_type() {
+  AMEZMO_APP_TYPE="${AMEZMO_APP_TYPE:-drupal}"
+  case "$AMEZMO_APP_TYPE" in
+    drupal|wordpress|custom) ;;
+    *) die "AMEZMO_APP_TYPE must be drupal, wordpress, or custom." ;;
+  esac
+}
+
+validate_command() {
+  local key="$1" value="${!1:-}"
+  require_value "$key"
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] \
+    || die "$key contains a control character."
+}
+
+validate_cli_path() {
+  local key="$1" value="${!1:-}"
+  require_value "$key"
+  [[ "$value" =~ ^[A-Za-z0-9_./@+-]+$ ]] \
+    || die "$key contains unsupported characters."
+}
+
 ssh_target() {
   printf '%s@%s' "$AMEZMO_SSH_USER" "$AMEZMO_SSH_HOST"
 }
@@ -106,6 +128,11 @@ validate_local_drush() {
   drush_path="$(local_drush_path)"
   [[ -x "$drush_path" ]] \
     || die "local Drush executable was not found at $drush_path. Run this from a consuming project with vendor/bin/drush installed."
+}
+
+remote_command() {
+  local command="$1"
+  ssh -p "$AMEZMO_SSH_PORT" -o BatchMode=yes "$(ssh_target)" "$command"
 }
 
 rsync_supports_protect_args() {
@@ -137,24 +164,47 @@ info() {
 pull_db() {
   require_command ssh
   validate_ssh_config
+  validate_app_type
   validate_remote_path AMEZMO_REMOTE_APP_ROOT
-  validate_drush_alias
-  validate_local_drush
-  local app_root="${DDEV_APPROOT:-$PWD}" download_dir tmp_dir dump_file drush_alias drush_path
-  drush_path="$(local_drush_path)"
-  drush_alias="@${AMEZMO_DRUSH_ALIAS#@}"
+  local app_root="${DDEV_APPROOT:-$PWD}" download_dir tmp_dir dump_file
   download_dir="${app_root}/.ddev/.downloads"
   mkdir -p "$download_dir"
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/ddev-amezmo.XXXXXX")"
   dump_file="$tmp_dir/db.sql.gz"
   cleanup() { rm -rf "$tmp_dir"; }
   trap cleanup EXIT HUP INT TERM
-  printf 'Streaming database via local Drush alias @%s to %s (%s)...\n' "${AMEZMO_DRUSH_ALIAS#@}" "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
-  if ! (cd "$app_root" && "$drush_path" "$drush_alias" sql:dump --gzip --no-interaction > "$dump_file" 2>"$tmp_dir/drush.stderr"); then
-    die "Drush database dump failed; the local database has not been imported. Verify the Drush alias and remote Drupal environment."
-  fi
+  case "$AMEZMO_APP_TYPE" in
+    drupal)
+      validate_drush_alias
+      validate_local_drush
+      local drush_path drush_alias
+      drush_path="$(local_drush_path)"
+      drush_alias="@${AMEZMO_DRUSH_ALIAS#@}"
+      printf 'Streaming database via local Drush alias @%s to %s (%s)...\n' "${AMEZMO_DRUSH_ALIAS#@}" "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
+      if ! (cd "$app_root" && "$drush_path" "$drush_alias" sql:dump --gzip --no-interaction > "$dump_file" 2>"$tmp_dir/cli.stderr"); then
+        die "Drush database dump failed; the local database has not been imported. Verify the Drush alias and remote Drupal environment."
+      fi
+      ;;
+    wordpress)
+      local remote_cli="${AMEZMO_REMOTE_CLI_PATH:-wp}"
+      if [[ -n "${AMEZMO_REMOTE_CLI_PATH:-}" ]]; then
+        validate_cli_path AMEZMO_REMOTE_CLI_PATH
+      fi
+      printf 'Streaming database via WP-CLI from %s (%s)...\n' "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
+      if ! remote_command "cd $(shell_quote "$AMEZMO_REMOTE_APP_ROOT") && $(shell_quote "$remote_cli") db export - --single-transaction --quiet" 2>"$tmp_dir/cli.stderr" | gzip > "$dump_file"; then
+        die "WP-CLI database dump failed; the local database has not been imported. Verify AMEZMO_REMOTE_CLI_PATH and the remote WordPress installation."
+      fi
+      ;;
+    custom)
+      validate_command AMEZMO_REMOTE_DB_DUMP_COMMAND
+      printf 'Streaming database via configured application command from %s (%s)...\n' "$AMEZMO_SSH_HOST" "${AMEZMO_ENVIRONMENT:-production}"
+      if ! remote_command "cd $(shell_quote "$AMEZMO_REMOTE_APP_ROOT") && $AMEZMO_REMOTE_DB_DUMP_COMMAND" 2>"$tmp_dir/cli.stderr" | gzip > "$dump_file"; then
+        die "Configured database dump command failed; the local database has not been imported."
+      fi
+      ;;
+  esac
   [[ -s "$dump_file" ]] || die "remote database dump was empty; the local database has not been imported."
-  gzip -t "$dump_file" || die "Drush database dump was not valid gzip; the local database has not been imported."
+  gzip -t "$dump_file" || die "Database dump was not valid gzip; the local database has not been imported."
   mv "$dump_file" "$download_dir/db.sql.gz"
   printf 'Database dump downloaded; DDEV will now import it.\n'
   cleanup
@@ -200,21 +250,39 @@ doctor() {
   validate_remote_path AMEZMO_REMOTE_APP_ROOT
   validate_remote_path AMEZMO_REMOTE_FILES_PATH
   validate_local_path
-  validate_drush_alias
-  validate_local_drush
+  validate_app_type
   ssh_check
-  local quoted_app quoted_files quoted_drush drush_alias drush_path
+  local quoted_app quoted_files
   quoted_app="$(shell_quote "$AMEZMO_REMOTE_APP_ROOT")"
   quoted_files="$(shell_quote "$AMEZMO_REMOTE_FILES_PATH")"
-  quoted_drush="$(shell_quote "$AMEZMO_REMOTE_APP_ROOT/vendor/bin/drush")"
   ssh -p "$AMEZMO_SSH_PORT" -o BatchMode=yes "$(ssh_target)" \
-    "test -d $quoted_app && test -r $quoted_app && test -d $quoted_files && test -r $quoted_files && test -x $quoted_drush && command -v rsync >/dev/null" \
-    || die "remote checks failed. Verify both remote paths are readable, vendor/bin/drush is available, and rsync is installed on the Amezmo instance."
-  drush_alias="@${AMEZMO_DRUSH_ALIAS#@}"
-  drush_path="$(local_drush_path)"
-  if ! (cd "${DDEV_APPROOT:-$PWD}" && "$drush_path" "$drush_alias" status --no-interaction >/dev/null 2>/dev/null); then
-    die "Drush database connectivity failed. Verify AMEZMO_DRUSH_ALIAS and the configured remote site alias."
-  fi
+    "test -d $quoted_app && test -r $quoted_app && test -d $quoted_files && test -r $quoted_files && command -v rsync >/dev/null" \
+    || die "remote checks failed. Verify both remote paths are readable and rsync is installed on the Amezmo instance."
+  case "$AMEZMO_APP_TYPE" in
+    drupal)
+      validate_drush_alias
+      validate_local_drush
+      local drush_alias drush_path
+      drush_alias="@${AMEZMO_DRUSH_ALIAS#@}"
+      drush_path="$(local_drush_path)"
+      if ! (cd "${DDEV_APPROOT:-$PWD}" && "$drush_path" "$drush_alias" status --no-interaction >/dev/null 2>/dev/null); then
+        die "Drush database connectivity failed. Verify AMEZMO_DRUSH_ALIAS and the configured remote site alias."
+      fi
+      ;;
+    wordpress)
+      local remote_cli="${AMEZMO_REMOTE_CLI_PATH:-wp}"
+      if [[ -n "${AMEZMO_REMOTE_CLI_PATH:-}" ]]; then
+        validate_cli_path AMEZMO_REMOTE_CLI_PATH
+      fi
+      remote_command "cd $quoted_app && $(shell_quote "$remote_cli") db check --quiet" >/dev/null 2>&1 \
+        || die "WP-CLI database connectivity failed. Verify AMEZMO_REMOTE_CLI_PATH and the remote WordPress installation."
+      ;;
+    custom)
+      validate_command AMEZMO_REMOTE_HEALTH_COMMAND
+      remote_command "cd $quoted_app && $AMEZMO_REMOTE_HEALTH_COMMAND" >/dev/null 2>&1 \
+        || die "Configured application health command failed."
+      ;;
+  esac
   printf 'Amezmo doctor passed for %s at %s:%s. Local files target: %s\n' "${AMEZMO_ENVIRONMENT:-production}" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT" "$AMEZMO_LOCAL_FILES_PATH"
 }
 

@@ -12,6 +12,7 @@ setup_fixture() {
   export HELPER="$BATS_TEST_TMPDIR/amezmo"
   export PATH="$FAKE_BIN:$PATH"
   export AMEZMO_ENVIRONMENT=staging
+  export AMEZMO_APP_TYPE=drupal
   export AMEZMO_SSH_HOST=example.test
   export AMEZMO_SSH_PORT=2222
   export AMEZMO_SSH_USER=deployer
@@ -33,6 +34,9 @@ if [[ "$*" == *"sh -s"* ]]; then
     printf "%s\n" "CREATE TABLE test (id int);" | gzip
   fi
   rm -f "$input"
+elif [[ "$*" == *"db export"* ]]; then
+  [[ "${FAKE_DUMP_FAIL:-}" != 1 ]] || exit 24
+  printf "%s\n" "CREATE TABLE wordpress_test (id int);"
 fi'
   make_fake rsync '#!/usr/bin/env bash
 if [[ "${1:-}" == "--help" ]]; then

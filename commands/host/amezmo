@@ -2,7 +2,9 @@
 #ddev-generated
 ## Description: Download from, upload to, or check a named Amezmo environment
 ## Usage: amezmo <pull|push|doctor> <environment> [flags]
+##        amezmo cli <command> [arguments]
 ## Example: "ddev amezmo pull production"
+##          "ddev amezmo cli whoami"
 
 set -Eeuo pipefail
 
@@ -21,6 +23,25 @@ print_push_warning() {
 }
 
 action="${1:-}"
+
+if [[ "$action" == "cli" ]]; then
+  shift
+  cli_path="${DDEV_APPROOT}/.ddev/amezmo/bin/amezmo-cli.phar"
+  if [[ ! -r "$cli_path" ]]; then
+    echo "ddev-amezmo: bundled amezmo-cli was not found at $cli_path." >&2
+    exit 1
+  fi
+  if ! command -v php >/dev/null 2>&1; then
+    echo "ddev-amezmo: PHP 8.3 or newer is required to run the bundled amezmo-cli, but PHP was not found on the host." >&2
+    exit 1
+  fi
+  if ! php -r 'exit(version_compare(PHP_VERSION, "8.3.0", ">=") ? 0 : 1);'; then
+    echo "ddev-amezmo: PHP 8.3 or newer is required to run the bundled amezmo-cli (found $(php -r 'echo PHP_VERSION;'))." >&2
+    exit 1
+  fi
+  exec php "$cli_path" "$@"
+fi
+
 environment="${2:-}"
 
 if ! [[ "$environment" =~ ^[A-Za-z0-9._-]+$ ]]; then
@@ -57,6 +78,7 @@ case "$action" in
     ;;
   *)
     echo "Usage: ddev amezmo <pull|push|doctor> <environment> [flags]" >&2
+    echo "       ddev amezmo cli <command> [arguments]" >&2
     exit 2
     ;;
 esac

@@ -21,11 +21,26 @@ setup() {
 @test "publishable add-on metadata lists generated files and removal support" {
   # The actual integration smoke test runs: ddev add-on get "$addon_root"
   grep -q '^name: amezmo$' "$BATS_TEST_DIRNAME/../install.yaml"
+  grep -q 'Replace only these add-on-managed release assets' "$BATS_TEST_DIRNAME/../install.yaml"
   grep -q 'providers/amezmo-production.yaml' "$BATS_TEST_DIRNAME/../install.yaml"
   grep -q 'providers/amezmo-staging.yaml' "$BATS_TEST_DIRNAME/../install.yaml"
   grep -q 'amezmo/environments/production.env' "$BATS_TEST_DIRNAME/../install.yaml"
   grep -q 'amezmo/environments/staging.env' "$BATS_TEST_DIRNAME/../install.yaml"
+  grep -q 'amezmo/bin/amezmo-cli.phar' "$BATS_TEST_DIRNAME/../install.yaml"
   grep -q '^removal_actions:' "$BATS_TEST_DIRNAME/../install.yaml"
+  grep -q 'rm -f amezmo/bin/amezmo-cli.phar' "$BATS_TEST_DIRNAME/../install.yaml"
+}
+
+@test "bundled amezmo-cli is dispatched without an environment" {
+  mkdir -p "$TEST_ROOT/.ddev/amezmo/bin"
+  : > "$TEST_ROOT/.ddev/amezmo/bin/amezmo-cli.phar"
+  make_fake php '#!/usr/bin/env bash
+if [[ "${1:-}" == "-r" ]]; then exit 0; fi
+printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/php.args"'
+
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" cli whoami --output=json
+  [ "$status" -eq 0 ]
+  grep -q "^${TEST_ROOT}/.ddev/amezmo/bin/amezmo-cli.phar whoami --output=json$" "$BATS_TEST_TMPDIR/php.args"
 }
 
 @test "provider declares pull and push commands and delegates skips to DDEV" {

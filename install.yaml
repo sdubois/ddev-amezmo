@@ -7,11 +7,18 @@ pre_install_actions:
       echo "ddev-amezmo must be installed inside a configured DDEV project. Run 'ddev config' first." >&2
       exit 1
     fi
+    # The bundled PHAR is binary and cannot carry DDEV's generated-file marker.
+    # Replace only these add-on-managed release assets during an upgrade.
+    rm -f \
+      "${DDEV_APPROOT}/.ddev/amezmo/bin/amezmo-cli.phar" \
+      "${DDEV_APPROOT}/.ddev/amezmo/bin/amezmo-cli.phar.sha256"
 
 project_files:
   - providers/amezmo-production.yaml
   - providers/amezmo-staging.yaml
   - amezmo/amezmo
+  - amezmo/bin/amezmo-cli.phar
+  - amezmo/bin/amezmo-cli.phar.sha256
   - amezmo/environments/production.env
   - amezmo/environments/staging.env
   - commands/host/amezmo
@@ -20,8 +27,11 @@ post_install_actions:
   - |
     #ddev-description:Show Amezmo setup instructions
     chmod +x amezmo/amezmo commands/host/amezmo
-    echo "ddev-amezmo installed. Configure the application type, Amezmo SSH endpoint, application root, and persistent storage paths in .ddev/amezmo/environments/production.env and staging.env. Restart DDEV, then run 'ddev amezmo doctor production' and 'ddev amezmo pull production'."
+    echo "ddev-amezmo installed. Configure the application type, Amezmo SSH endpoint, application root, and persistent storage paths in .ddev/amezmo/environments/production.env and staging.env. Restart DDEV, then run 'ddev amezmo doctor production', 'ddev amezmo pull production', or 'ddev amezmo cli whoami'."
 
-removal_actions: []
+removal_actions:
+  - |
+    #ddev-description:Remove the bundled Amezmo CLI release asset
+    rm -f amezmo/bin/amezmo-cli.phar amezmo/bin/amezmo-cli.phar.sha256
 
 ddev_version_constraint: '>= v1.24.10'

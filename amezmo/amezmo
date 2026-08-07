@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #ddev-generated
+# shellcheck disable=SC2016
 
 set -Eeuo pipefail
 
@@ -105,11 +106,95 @@ validate_cli_path() {
     || die "$key contains characters that cannot be used safely in a command path."
 }
 
+validate_instance_id() {
+  require_value AMEZMO_INSTANCE_ID
+  [[ "$AMEZMO_INSTANCE_ID" =~ ^[A-Za-z0-9._-]+$ ]] \
+    || die "AMEZMO_INSTANCE_ID contains unsupported characters."
+}
+
+auto_trust_ssh_ip_enabled() {
+  case "${AMEZMO_AUTO_TRUST_SSH_IP:-false}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    0|false|FALSE|no|NO|off|OFF|'') return 1 ;;
+    *) die "AMEZMO_AUTO_TRUST_SSH_IP must be true or false." ;;
+  esac
+}
+
+amezmo_cli_path() {
+  local app_root="${DDEV_APPROOT:-$PWD}"
+  printf '%s/.ddev/amezmo/bin/amezmo-cli.phar' "$app_root"
+}
+
+current_public_ip() {
+  require_command curl
+  local ip
+  ip="$(curl --fail --silent --show-error --location --max-time 10 https://api.ipify.org)" \
+    || die "Could not determine the current public IP address. Check network access or disable automatic SSH IP updates."
+  ip="${ip//$'\n'/}"
+  [[ "$ip" =~ ^[0-9A-Fa-f:.]+$ && "$ip" =~ [0-9] ]] \
+    || die "The public IP address returned by the IP service was invalid."
+  printf '%s' "$ip"
+}
+
+update_trusted_ssh_ip() {
+  auto_trust_ssh_ip_enabled || return 0
+  validate_instance_id
+  require_command php
+  local cli_path ip environment_json ip_in_list=0
+  cli_path="$(amezmo_cli_path)"
+  [[ -r "$cli_path" ]] || die "Automatic SSH IP update requires the bundled amezmo-cli at $cli_path."
+  ip="$(current_public_ip)"
+  printf "SSH access was rejected. Checking whether Amezmo trusts this public IP (%s)...\n" "$ip" >&2
+  environment_json="$(php "$cli_path" environments get "$AMEZMO_INSTANCE_ID" "$AMEZMO_ENVIRONMENT" --output=json --no-interaction)" \
+    || die "Could not read Amezmo environment access settings with amezmo-cli. Check AMEZMO_API_KEY and AMEZMO_INSTANCE_ID."
+
+  while IFS= read -r existing_ip; do
+    [[ -n "$existing_ip" ]] || continue
+    if [[ "$existing_ip" == "$ip" ]]; then
+      ip_in_list=1
+    fi
+  done < <(printf '%s' "$environment_json" | php -r '
+    $data = json_decode(stream_get_contents(STDIN), true);
+    foreach (($data["trusted_ssh_ips"] ?? []) as $ip) {
+        if (is_string($ip)) { echo $ip, PHP_EOL; }
+    }
+  ')
+
+  if (( ip_in_list )); then
+    printf 'Amezmo already trusts the current public IP. Retrying SSH access...\n' >&2
+    return 0
+  fi
+
+  local answer
+  printf 'Add %s to the trusted SSH IPs for Amezmo %s? [y/N] ' "$ip" "$AMEZMO_ENVIRONMENT" >&2
+  if ! IFS= read -r answer || [[ ! "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+    die "Automatic SSH IP update was not approved; SSH access was not retried."
+  fi
+
+  local -a update_args=(environments update "$AMEZMO_INSTANCE_ID" "$AMEZMO_ENVIRONMENT" --trusted-ssh-ip "$ip" --yes --no-interaction)
+  while IFS= read -r existing_ip; do
+    [[ -n "$existing_ip" ]] || continue
+    update_args+=(--trusted-ssh-ip "$existing_ip")
+  done < <(printf '%s' "$environment_json" | php -r '
+    $data = json_decode(stream_get_contents(STDIN), true);
+    foreach (($data["trusted_ssh_ips"] ?? []) as $ip) {
+        if (is_string($ip)) { echo $ip, PHP_EOL; }
+    }
+  ')
+  printf 'Adding the current public IP to Amezmo trusted SSH IPs with amezmo-cli...\n' >&2
+  php "$cli_path" "${update_args[@]}" >/dev/null \
+    || die "Could not add the current public IP to Amezmo trusted SSH IPs with amezmo-cli."
+}
+
 ssh_target() {
   printf '%s@%s' "$AMEZMO_SSH_USER" "$AMEZMO_SSH_HOST"
 }
 
 ssh_check() {
+  if ssh -p "$AMEZMO_SSH_PORT" -o BatchMode=yes -o ConnectTimeout=10 "$(ssh_target)" true >/dev/null; then
+    return 0
+  fi
+  update_trusted_ssh_ip
   ssh -p "$AMEZMO_SSH_PORT" -o BatchMode=yes -o ConnectTimeout=10 "$(ssh_target)" true >/dev/null \
     || die "Could not connect to Amezmo's SSH endpoint $(ssh_target):${AMEZMO_SSH_PORT}. Enable SSH, add your public key, trust your current IP if required, and verify the host key."
 }

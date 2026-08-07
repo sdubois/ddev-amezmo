@@ -12,6 +12,7 @@ setup_fixture() {
   export HELPER="$BATS_TEST_TMPDIR/amezmo"
   export PATH="$FAKE_BIN:$PATH"
   export AMEZMO_ENVIRONMENT=staging
+  export AMEZMO_AUTO_TRUST_SSH_IP=false
   export AMEZMO_APP_TYPE=drupal
   export AMEZMO_SSH_HOST=example.test
   export AMEZMO_SSH_PORT=2222
@@ -20,11 +21,12 @@ setup_fixture() {
   export AMEZMO_DRUSH_ALIAS=staging
   export AMEZMO_REMOTE_FILES_PATH=/webroot/storage/public
   export AMEZMO_LOCAL_FILES_PATH=web/sites/default/files
-  unset FAKE_SSH_FAIL FAKE_DUMP_FAIL FAKE_RSYNC_FAIL FAKE_RSYNC_NO_PROTECT_ARGS FAKE_CAPTURE
+  unset FAKE_SSH_FAIL FAKE_SSH_FAIL_ONCE FAKE_DUMP_FAIL FAKE_RSYNC_FAIL FAKE_RSYNC_NO_PROTECT_ARGS FAKE_CAPTURE
 
   make_fake ssh '#!/usr/bin/env bash
 set -eu
 if [[ "${FAKE_SSH_FAIL:-}" == 1 ]]; then exit 23; fi
+if [[ "${FAKE_SSH_FAIL_ONCE:-}" == 1 && ! -e "${BATS_TEST_TMPDIR}/ssh.failed" ]]; then touch "${BATS_TEST_TMPDIR}/ssh.failed"; exit 23; fi
 if [[ "$*" == *"sh -s"* ]]; then
   input=$(mktemp)
   cat > "$input"

@@ -41,6 +41,8 @@ Set these values independently in `.ddev/amezmo/environments/production.env` and
 
 ```dotenv
 export AMEZMO_ENVIRONMENT=production
+export AMEZMO_INSTANCE_ID=3503
+export AMEZMO_AUTO_TRUST_SSH_IP=true
 export AMEZMO_APP_TYPE=drupal
 export AMEZMO_SSH_HOST=your-amezmo-host
 export AMEZMO_SSH_PORT=12345
@@ -52,6 +54,8 @@ export AMEZMO_LOCAL_FILES_PATH=web/sites/default/files
 ```
 
 Use the SSH endpoint, application root, Drush alias, and persistent storage paths for that exact Amezmo environment. Amezmo normally stores persistent data under `/webroot/storage`; staging environments can have a different storage root. Do not derive staging values from production. See the [configuration reference](https://github.com/sdubois/ddev-amezmo/wiki/Configuration) for all settings and adapter examples.
+
+When `AMEZMO_AUTO_TRUST_SSH_IP=true` (the generated default), a failed SSH access check discovers the current public IP, reads the selected environment's existing trusted SSH IPs with the bundled `amezmo-cli`, and asks for confirmation before appending the current IP and retrying the connection. Set `AMEZMO_INSTANCE_ID` to the Amezmo instance ID for each profile. The CLI must have an API key configured (`AMEZMO_API_KEY` or its normal config file). Existing trusted IPs are preserved. Set the switch to `false` to disable this behavior.
 
 ```bash
 ddev restart

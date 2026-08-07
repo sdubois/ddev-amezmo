@@ -74,8 +74,41 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   grep -q 'AMEZMO_DRUSH_ALIAS=live' "$production"
   grep -q 'AMEZMO_ENVIRONMENT=staging' "$staging"
   grep -q 'AMEZMO_DRUSH_ALIAS=staging' "$staging"
+  grep -q 'AMEZMO_AUTO_TRUST_SSH_IP=true' "$production"
+  grep -q 'AMEZMO_AUTO_TRUST_SSH_IP=true' "$staging"
   ! grep -q 'AMEZMO_DB_' "$production"
   ! grep -q 'AMEZMO_DB_' "$staging"
+}
+
+@test "SSH access appends the current IP through the bundled amezmo-cli and retries" {
+  export FAKE_SSH_FAIL_ONCE=1
+  export AMEZMO_INSTANCE_ID=3503
+  export AMEZMO_AUTO_TRUST_SSH_IP=true
+  make_fake curl '#!/usr/bin/env bash
+printf "%s\n" "203.0.113.10"'
+  make_fake php '#!/usr/bin/env bash
+if [[ "${1:-}" == "-r" ]]; then
+  printf "%s\n" "198.51.100.10"
+elif [[ "$*" == *"environments get"* ]]; then
+  printf "%s\n" '{"trusted_ssh_ips":["198.51.100.10"]}'
+else
+  printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/amezmo-cli.args"
+fi'
+  mkdir -p "$TEST_ROOT/.ddev/amezmo/bin"
+  : > "$TEST_ROOT/.ddev/amezmo/bin/amezmo-cli.phar"
+
+  run bash -c 'printf "%s\n" "y" | "$1" auth' _ "$HELPER"
+  [ "$status" -eq 0 ]
+  grep -q 'environments update 3503 staging --trusted-ssh-ip 203.0.113.10 --yes --no-interaction --trusted-ssh-ip 198.51.100.10' "$BATS_TEST_TMPDIR/amezmo-cli.args"
+  [[ "$output" == *"SSH connection succeeded"* ]]
+}
+
+@test "SSH IP update can be disabled" {
+  export FAKE_SSH_FAIL=1
+  export AMEZMO_AUTO_TRUST_SSH_IP=false
+  run "$HELPER" auth
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Could not connect to Amezmo's SSH endpoint"* ]]
 }
 
 @test "named profile loads its own complete configuration" {

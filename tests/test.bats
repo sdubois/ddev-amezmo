@@ -43,6 +43,29 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/php.args"'
   grep -q "^${TEST_ROOT}/.ddev/amezmo/bin/amezmo-cli.phar whoami --output=json$" "$BATS_TEST_TMPDIR/php.args"
 }
 
+@test "amezmo drush loads the named environment and forwards arguments unchanged" {
+  mkdir -p "$TEST_ROOT/.ddev/amezmo/environments"
+  cp "$HELPER" "$TEST_ROOT/.ddev/amezmo/amezmo"
+  sed \
+    -e 's/^export AMEZMO_AUTO_TRUST_SSH_IP=.*/export AMEZMO_AUTO_TRUST_SSH_IP=false/' \
+    -e 's/^export AMEZMO_SSH_HOST=.*/export AMEZMO_SSH_HOST=production.example.test/' \
+    -e 's/^export AMEZMO_SSH_PORT=.*/export AMEZMO_SSH_PORT=2201/' \
+    "$BATS_TEST_DIRNAME/../amezmo/environments/production.env" \
+    > "$TEST_ROOT/.ddev/amezmo/environments/production.env"
+
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" drush production \
+    config:set system.site name "My Site" -y
+  [ "$status" -eq 0 ]
+  expected=$'@live\nconfig:set\nsystem.site\nname\nMy\\ Site\n-y'
+  [ "$(<"$BATS_TEST_TMPDIR/drush.argv")" = "$expected" ]
+}
+
+@test "amezmo drush requires a command" {
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" drush staging
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"ddev amezmo drush <environment> <command>"* ]]
+}
+
 @test "provider declares pull and push commands and delegates skips to DDEV" {
   for provider in "$BATS_TEST_DIRNAME"/../providers/amezmo-*.yaml; do
     grep -q '^db_pull_command:' "$provider"
@@ -111,6 +134,20 @@ fi'
   [[ "$output" == *"Could not connect to Amezmo's SSH endpoint"* ]]
 }
 
+@test "transfer and Drush actions check SSH access before operating" {
+  local action
+  for action in pull-db pull-files push-db push-files drush; do
+    export FAKE_SSH_FAIL=1
+    if [[ "$action" == "drush" ]]; then
+      run "$HELPER" "$action" status
+    else
+      run "$HELPER" "$action"
+    fi
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Could not connect to Amezmo's SSH endpoint"* ]]
+  done
+}
+
 @test "named profile loads its own complete configuration" {
   profile_dir="$TEST_ROOT/.ddev/amezmo/environments"
   mkdir -p "$profile_dir"
@@ -165,7 +202,7 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   export FAKE_SSH_FAIL=1
   run "$HELPER" auth
   [ "$status" -ne 0 ]
-  [[ "$output" == *"SSH connection"*"failed"* ]]
+  [[ "$output" == *"Could not connect to Amezmo's SSH endpoint"* ]]
 }
 
 @test "database-only pull creates DDEV handoff dump" {
@@ -196,7 +233,7 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   printf '%s\n' 'CREATE TABLE local_test (id int);' | gzip > "$TEST_ROOT/.ddev/.downloads/db.sql.gz"
   run "$HELPER" push-db
   [ "$status" -eq 0 ]
-  [[ "$output" == *"WARNING: This will write local"* ]]
+  [[ "$output" == *"WARNING: This will upload your local database"* ]]
   [[ "$output" == *"Database upload completed"* ]]
 }
 
@@ -208,7 +245,7 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   grep -q "$TEST_ROOT/web/sites/default/files/" "$BATS_TEST_TMPDIR/rsync.args"
   grep -q '/webroot/storage/public/' "$BATS_TEST_TMPDIR/rsync.args"
   ! grep -q -- '--delete' "$BATS_TEST_TMPDIR/rsync.args"
-  [[ "$output" == *"WARNING: This will write local"* ]]
+  [[ "$output" == *"WARNING: This will upload your local database"* ]]
 }
 
 @test "legacy rsync rejects paths that need protected arguments" {
@@ -259,6 +296,26 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   [ "$status" -eq 0 ]
   grep -q '^@staging status --no-interaction$' "$BATS_TEST_TMPDIR/drush.args"
   [[ "$output" != *"TTY mode requires /dev/tty"* ]]
+}
+
+@test "Drush action uses the configured local alias" {
+  run "$HELPER" drush cache:rebuild --yes
+  [ "$status" -eq 0 ]
+  grep -q '^@staging cache:rebuild --yes$' "$BATS_TEST_TMPDIR/drush.args"
+}
+
+@test "Drush action returns the Drush exit status" {
+  export FAKE_DRUSH_FAIL=1
+  run "$HELPER" drush cache:rebuild
+  [ "$status" -eq 27 ]
+}
+
+@test "Drush action rejects non-Drupal adapters" {
+  export AMEZMO_APP_TYPE=wordpress
+  run "$HELPER" drush cache:rebuild
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"drush is available only when AMEZMO_APP_TYPE=drupal"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/drush.args" ]
 }
 
 @test "WordPress adapter streams a remote WP-CLI dump" {
@@ -317,7 +374,7 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
 @test "local absolute path is rejected" {
   AMEZMO_LOCAL_FILES_PATH=/tmp/files run "$HELPER" pull-files
   [ "$status" -ne 0 ]
-  [[ "$output" == *"relative to the project root"* ]]
+  [[ "$output" == *"relative to the local project root"* ]]
 }
 
 @test "local traversal is rejected" {

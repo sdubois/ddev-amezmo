@@ -62,6 +62,7 @@ ddev restart
 ddev amezmo doctor production
 ddev amezmo pull production
 ddev amezmo push staging
+ddev amezmo drush staging cache:rebuild
 ddev amezmo cli whoami
 ```
 
@@ -73,6 +74,16 @@ ddev amezmo pull staging --skip-db
 ```
 
 `doctor` is read-only. A download can replace the local database and copy sensitive persistent storage files from Amezmo, so back up local work and follow your organization's data-handling rules.
+
+For Drupal projects, run any Drush command against a configured Amezmo environment through its local Drush site alias:
+
+```bash
+ddev amezmo drush staging status
+ddev amezmo drush production config:get system.site
+ddev amezmo drush staging user:login --uid=1
+```
+
+The add-on loads the selected environment's `AMEZMO_DRUSH_ALIAS`, checks SSH access, and passes the command and arguments unchanged to the project's local `vendor/bin/drush`. Drush commands can change remote data or configuration; review the selected environment and command before running mutating operations.
 
 `push` uploads the local database and persistent storage files to the selected Amezmo environment. DDEV displays a confirmation prompt, and the add-on prints an additional warning identifying the Amezmo target. Review the environment, local data, and paths carefully; uploading to production can overwrite important data. File uploads overwrite matching files but do not delete files already in the Amezmo environment. Database uploads replace the target database contents through the selected application CLI. Use `--skip-db` or `--skip-files` when only one asset type should be transferred.
 

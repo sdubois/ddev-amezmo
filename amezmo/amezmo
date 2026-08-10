@@ -246,9 +246,28 @@ info() {
   printf 'Amezmo %s environment — SSH endpoint %s@%s:%s\n' "$AMEZMO_ENVIRONMENT" "$AMEZMO_SSH_USER" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT"
 }
 
+run_drush() {
+  [[ $# -gt 0 ]] || die "drush requires a command or option."
+  require_command ssh
+  validate_ssh_config
+  ssh_check
+  validate_app_type
+  [[ "$AMEZMO_APP_TYPE" == "drupal" ]] \
+    || die "drush is available only when AMEZMO_APP_TYPE=drupal."
+  validate_drush_alias
+  validate_local_drush
+
+  local drush_path drush_alias app_root
+  app_root="${DDEV_APPROOT:-$PWD}"
+  drush_path="$(local_drush_path)"
+  drush_alias="@${AMEZMO_DRUSH_ALIAS#@}"
+  (cd "$app_root" && "$drush_path" "$drush_alias" "$@")
+}
+
 pull_db() {
   require_command ssh
   validate_ssh_config
+  ssh_check
   validate_app_type
   validate_remote_path AMEZMO_REMOTE_APP_ROOT
   local app_root="${DDEV_APPROOT:-$PWD}" download_dir tmp_dir dump_file
@@ -300,6 +319,7 @@ pull_files() {
   require_command ssh
   require_command rsync
   validate_ssh_config
+  ssh_check
   validate_remote_path AMEZMO_REMOTE_FILES_PATH
   validate_local_path
   local app_root="${DDEV_APPROOT:-$PWD}" destination
@@ -338,6 +358,7 @@ push_warning() {
 push_db() {
   require_command ssh
   validate_ssh_config
+  ssh_check
   validate_app_type
   validate_remote_path AMEZMO_REMOTE_APP_ROOT
   local app_root="${DDEV_APPROOT:-$PWD}" dump_file remote_cli
@@ -379,6 +400,7 @@ push_files() {
   require_command ssh
   require_command rsync
   validate_ssh_config
+  ssh_check
   validate_remote_path AMEZMO_REMOTE_FILES_PATH
   validate_local_path
   local app_root="${DDEV_APPROOT:-$PWD}" source
@@ -460,10 +482,11 @@ fi
 case "${1:-}" in
   info) info ;;
   auth) auth ;;
+  drush) shift; run_drush "$@" ;;
   pull-db) pull_db ;;
   pull-files) pull_files ;;
   doctor) doctor ;;
   push-db) push_db ;;
   push-files) push_files ;;
-  *) die "unknown action '${1:-}'. Expected info, auth, pull-db, pull-files, push-db, push-files, or doctor." ;;
+  *) die "unknown action '${1:-}'. Expected info, auth, drush, pull-db, pull-files, push-db, push-files, or doctor." ;;
 esac

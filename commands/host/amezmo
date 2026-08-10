@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 #ddev-generated
-## Description: Download from, upload to, or check a named Amezmo environment
+## Description: Download from, upload to, check, or run Drush on a named Amezmo environment
 ## Usage: amezmo <pull|push|doctor> <environment> [flags]
+##        amezmo drush <environment> <command> [arguments]
 ##        amezmo cli <command> [arguments]
 ## Example: "ddev amezmo pull production"
+##          "ddev amezmo drush staging cache:rebuild"
 ##          "ddev amezmo cli whoami"
 
 set -Eeuo pipefail
@@ -15,11 +17,11 @@ print_push_warning() {
     source "$profile_file"
   fi
   printf "\nWARNING: This will upload your local database and persistent storage files to Amezmo's %s environment.\n" \
-    "${AMEZMO_ENVIRONMENT:-$environment}" >&2
+    "$environment" >&2
   printf 'Amezmo SSH endpoint: %s:%s.\n' \
     "${AMEZMO_SSH_HOST:-<not configured>}" "${AMEZMO_SSH_PORT:-<not configured>}" >&2
   printf 'The database upload can replace the target database contents. File uploads overwrite matching files but do not delete files already in the environment.\n' >&2
-  printf 'DDEV may use generic "upstream production" wording in its next confirmation; the selected Amezmo target is %s.\n\n' "${AMEZMO_ENVIRONMENT:-$environment}" >&2
+  printf 'DDEV may use generic "upstream production" wording in its next confirmation; the selected Amezmo target is %s.\n\n' "$environment" >&2
 }
 
 action="${1:-}"
@@ -46,6 +48,7 @@ environment="${2:-}"
 
 if ! [[ "$environment" =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "Usage: ddev amezmo <pull|push|doctor> <environment> [flags]" >&2
+  echo "       ddev amezmo drush <environment> <command> [arguments]" >&2
   exit 2
 fi
 
@@ -56,6 +59,14 @@ case "$action" in
       exit 2
     fi
     exec "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile "$environment" doctor
+    ;;
+  drush)
+    if [[ $# -lt 3 ]]; then
+      echo "Usage: ddev amezmo drush <environment> <command> [arguments]" >&2
+      exit 2
+    fi
+    shift 2
+    exec "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile "$environment" drush "$@"
     ;;
   pull)
     provider="${DDEV_APPROOT}/.ddev/providers/amezmo-${environment}.yaml"
@@ -78,6 +89,7 @@ case "$action" in
     ;;
   *)
     echo "Usage: ddev amezmo <pull|push|doctor> <environment> [flags]" >&2
+    echo "       ddev amezmo drush <environment> <command> [arguments]" >&2
     echo "       ddev amezmo cli <command> [arguments]" >&2
     exit 2
     ;;

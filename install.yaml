@@ -27,7 +27,7 @@ post_install_actions:
   - |
     #ddev-description:Show Amezmo setup instructions
     chmod +x amezmo/amezmo commands/host/amezmo
-    echo "ddev-amezmo installed. Configure the application type, Amezmo SSH endpoint, application root, and persistent storage paths in .ddev/amezmo/environments/production.env and staging.env. Restart DDEV, then run 'ddev amezmo doctor production', 'ddev amezmo pull production', or 'ddev amezmo cli whoami'."
+    echo "ddev-amezmo installed. Configure the application type, Amezmo SSH endpoint, application root, and persistent storage paths in .ddev/amezmo/environments/production.env and staging.env. Restart DDEV, then run 'ddev amezmo doctor production', 'ddev amezmo pull production', 'ddev amezmo drush staging status', or 'ddev amezmo cli whoami'."
 
 removal_actions:
   - |

@@ -21,7 +21,7 @@ setup_fixture() {
   export AMEZMO_DRUSH_ALIAS=staging
   export AMEZMO_REMOTE_FILES_PATH=/webroot/storage/public
   export AMEZMO_LOCAL_FILES_PATH=web/sites/default/files
-  unset FAKE_SSH_FAIL FAKE_SSH_FAIL_ONCE FAKE_DUMP_FAIL FAKE_RSYNC_FAIL FAKE_RSYNC_NO_PROTECT_ARGS FAKE_CAPTURE
+  unset FAKE_SSH_FAIL FAKE_SSH_FAIL_ONCE FAKE_DUMP_FAIL FAKE_DRUSH_FAIL FAKE_RSYNC_FAIL FAKE_RSYNC_NO_PROTECT_ARGS FAKE_CAPTURE
 
   make_fake ssh '#!/usr/bin/env bash
 set -eu
@@ -54,6 +54,8 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/rsync.args"'
   make_fake drush '#!/usr/bin/env bash
 set -eu
 printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/drush.args"
+printf "%q\n" "$@" > "${BATS_TEST_TMPDIR}/drush.argv"
+[[ "${FAKE_DRUSH_FAIL:-}" != 1 ]] || exit 27
 if [[ "$*" == *"sql:dump"* ]]; then
   [[ "$*" == *"--no-interaction"* ]] || { printf "%s\n" "TTY mode requires /dev/tty to be read/writable." >&2; exit 26; }
   [[ "${FAKE_DUMP_FAIL:-}" != 1 ]] || exit 24

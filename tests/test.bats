@@ -50,14 +50,15 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/php.args"'
     -e 's/^export AMEZMO_AUTO_TRUST_SSH_IP=.*/export AMEZMO_AUTO_TRUST_SSH_IP=false/' \
     -e 's/^export AMEZMO_SSH_HOST=.*/export AMEZMO_SSH_HOST=production.example.test/' \
     -e 's/^export AMEZMO_SSH_PORT=.*/export AMEZMO_SSH_PORT=2201/' \
+    -e 's|^export AMEZMO_SITE_URI=.*|export AMEZMO_SITE_URI=https://production.example.test|' \
     "$BATS_TEST_DIRNAME/../amezmo/environments/production.env" \
     > "$TEST_ROOT/.ddev/amezmo/environments/production.env"
 
   run "$BATS_TEST_DIRNAME/../commands/host/amezmo" drush production \
     config:set system.site name "My Site" -y
   [ "$status" -eq 0 ]
-  expected=$'@live\nconfig:set\nsystem.site\nname\nMy\\ Site\n-y'
-  [ "$(<"$BATS_TEST_TMPDIR/drush.argv")" = "$expected" ]
+  expected="cd '/webroot/current' && 'vendor/bin/drush' '--uri=https://production.example.test' 'config:set' 'system.site' 'name' 'My Site' '-y'"
+  [ "$(<"$BATS_TEST_TMPDIR/drush.remote")" = "$expected" ]
 }
 
 @test "amezmo drush requires a command" {
@@ -89,14 +90,16 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   [[ "$output" == *"upload your local database and persistent storage files to Amezmo's production environment"* ]]
 }
 
-@test "generated profiles keep environments and Drush aliases independent" {
+@test "generated profiles keep environments and site URIs independent" {
   production="$BATS_TEST_DIRNAME/../amezmo/environments/production.env"
   staging="$BATS_TEST_DIRNAME/../amezmo/environments/staging.env"
   grep -q '#ddev-generated' "$production"
   grep -q 'AMEZMO_ENVIRONMENT=production' "$production"
-  grep -q 'AMEZMO_DRUSH_ALIAS=live' "$production"
+  grep -q 'AMEZMO_SITE_URI=' "$production"
   grep -q 'AMEZMO_ENVIRONMENT=staging' "$staging"
-  grep -q 'AMEZMO_DRUSH_ALIAS=staging' "$staging"
+  grep -q 'AMEZMO_SITE_URI=' "$staging"
+  ! grep -q 'AMEZMO_DRUSH_ALIAS' "$production"
+  ! grep -q 'AMEZMO_DRUSH_ALIAS' "$staging"
   grep -q 'AMEZMO_AUTO_TRUST_SSH_IP=true' "$production"
   grep -q 'AMEZMO_AUTO_TRUST_SSH_IP=true' "$staging"
   ! grep -q 'AMEZMO_DB_' "$production"
@@ -156,7 +159,7 @@ fi'
     -e 's/^export AMEZMO_SSH_PORT=.*/export AMEZMO_SSH_PORT=2201/' \
     -e 's|^export AMEZMO_REMOTE_FILES_PATH=.*|export AMEZMO_REMOTE_FILES_PATH=/webroot/storage/public|' \
     -e 's|^export AMEZMO_LOCAL_FILES_PATH=.*|export AMEZMO_LOCAL_FILES_PATH=web/sites/default/files|' \
-    -e 's/^export AMEZMO_DRUSH_ALIAS=.*/export AMEZMO_DRUSH_ALIAS=live/' \
+    -e 's|^export AMEZMO_SITE_URI=.*|export AMEZMO_SITE_URI=https://www.example.test|' \
     "$BATS_TEST_DIRNAME/../amezmo/environments/production.env" > "$profile_dir/production.env"
   run "$HELPER" --profile production doctor
   [ "$status" -eq 0 ]
@@ -281,27 +284,46 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   [[ "$output" == *"partially updated"* ]]
 }
 
-@test "remote Drush dump uses the alias and stays compressed" {
+@test "remote Drush dump uses the site-local CLI and stays compressed" {
   run "$HELPER" pull-db
   [ "$status" -eq 0 ]
-  grep -q '^@staging sql:dump --gzip --no-interaction$' "$BATS_TEST_TMPDIR/drush.args"
-  [ ! -e "$BATS_TEST_TMPDIR/remote-script" ]
+  grep -q "^cd '/webroot/current' && 'vendor/bin/drush' '--uri=https://staging.example.test' 'sql:dump' '--gzip' '--no-interaction'$" "$BATS_TEST_TMPDIR/drush.remote"
   [[ "$output" != *"TTY mode requires /dev/tty"* ]]
   gzip -t "$TEST_ROOT/.ddev/.downloads/db.sql.gz"
   [ -z "$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'ddev-amezmo.*' -type d -print -quit 2>/dev/null)" ]
 }
 
-@test "doctor uses local Drush while retaining direct SSH validation" {
+@test "doctor uses site-local Drush over the configured SSH connection" {
   run "$HELPER" doctor
   [ "$status" -eq 0 ]
-  grep -q '^@staging status --no-interaction$' "$BATS_TEST_TMPDIR/drush.args"
+  grep -q "^cd '/webroot/current' && 'vendor/bin/drush' '--uri=https://staging.example.test' 'status' '--no-interaction'$" "$BATS_TEST_TMPDIR/drush.remote"
   [[ "$output" != *"TTY mode requires /dev/tty"* ]]
 }
 
-@test "Drush action uses the configured local alias" {
+@test "Drush action uses the configured remote root and site URI" {
   run "$HELPER" drush cache:rebuild --yes
   [ "$status" -eq 0 ]
-  grep -q '^@staging cache:rebuild --yes$' "$BATS_TEST_TMPDIR/drush.args"
+  grep -q "^cd '/webroot/current' && 'vendor/bin/drush' '--uri=https://staging.example.test' 'cache:rebuild' '--yes'$" "$BATS_TEST_TMPDIR/drush.remote"
+}
+
+@test "Drush action supports a configured remote CLI path" {
+  export AMEZMO_REMOTE_CLI_PATH=bin/drush
+  run "$HELPER" drush status
+  [ "$status" -eq 0 ]
+  grep -q "^cd '/webroot/current' && 'bin/drush' '--uri=https://staging.example.test' 'status'$" "$BATS_TEST_TMPDIR/drush.remote"
+}
+
+@test "Drush action shell-quotes arbitrary argument values" {
+  run "$HELPER" drush config:set system.site name "O'Brien; touch /tmp/bad"
+  [ "$status" -eq 0 ]
+  grep -Fq "'O'\\''Brien; touch /tmp/bad'" "$BATS_TEST_TMPDIR/drush.remote"
+}
+
+@test "Drush action requires the environment site URI" {
+  export AMEZMO_SITE_URI=
+  run "$HELPER" drush status
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Amezmo setting AMEZMO_SITE_URI is empty"* ]]
 }
 
 @test "Drush action returns the Drush exit status" {
@@ -315,7 +337,7 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   run "$HELPER" drush cache:rebuild
   [ "$status" -ne 0 ]
   [[ "$output" == *"drush is available only when AMEZMO_APP_TYPE=drupal"* ]]
-  [ ! -e "$BATS_TEST_TMPDIR/drush.args" ]
+  [ ! -e "$BATS_TEST_TMPDIR/drush.remote" ]
 }
 
 @test "WordPress adapter streams a remote WP-CLI dump" {
@@ -359,10 +381,10 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   [[ "$output" == *"AMEZMO_APP_TYPE must be drupal, wordpress, or custom"* ]]
 }
 
-@test "unsafe Drush alias is rejected" {
-  AMEZMO_DRUSH_ALIAS='live;touch /tmp/bad' run "$HELPER" pull-db
+@test "invalid Drupal site URI is rejected" {
+  AMEZMO_SITE_URI='javascript:alert(1)' run "$HELPER" pull-db
   [ "$status" -ne 0 ]
-  [[ "$output" == *"AMEZMO_DRUSH_ALIAS contains unsupported characters"* ]]
+  [[ "$output" == *"AMEZMO_SITE_URI must be a complete HTTP or HTTPS URL"* ]]
 }
 
 @test "remote root path is rejected" {

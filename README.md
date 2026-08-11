@@ -48,12 +48,14 @@ export AMEZMO_SSH_HOST=your-amezmo-host
 export AMEZMO_SSH_PORT=12345
 export AMEZMO_SSH_USER=deployer
 export AMEZMO_REMOTE_APP_ROOT=/webroot/current
-export AMEZMO_DRUSH_ALIAS=live
+export AMEZMO_SITE_URI=https://www.example.com
 export AMEZMO_REMOTE_FILES_PATH=/webroot/storage
 export AMEZMO_LOCAL_FILES_PATH=web/sites/default/files
 ```
 
-Use the SSH endpoint, application root, Drush alias, and persistent storage paths for that exact Amezmo environment. Amezmo normally stores persistent data under `/webroot/storage`; staging environments can have a different storage root. Do not derive staging values from production. See the [configuration reference](https://github.com/sdubois/ddev-amezmo/wiki/Configuration) for all settings and adapter examples.
+Use the SSH endpoint, application root, public site URI, and persistent storage paths for that exact Amezmo environment. `AMEZMO_SITE_URI` is the HTTP or HTTPS URL Drush should use, such as a custom production or staging domain. It is separate from `AMEZMO_SSH_HOST`, which must remain the Amezmo SSH endpoint. Amezmo normally stores persistent data under `/webroot/storage`; staging environments can have a different storage root. Do not derive staging values from production. See the [configuration reference](https://github.com/sdubois/ddev-amezmo/wiki/Configuration) for all settings and adapter examples.
+
+When upgrading a customized Drupal profile created by version 0.2.1 or earlier, remove `AMEZMO_DRUSH_ALIAS` and add `AMEZMO_SITE_URI`. The add-on now runs Drush directly in the Amezmo application release and no longer reads a local Drush site-alias file.
 
 When `AMEZMO_AUTO_TRUST_SSH_IP=true` (the generated default), a failed SSH access check discovers the current public IP, reads the selected environment's existing trusted SSH IPs with the bundled `amezmo-cli`, and asks for confirmation before appending the current IP and retrying the connection. Set `AMEZMO_INSTANCE_ID` to the Amezmo instance ID for each profile. The CLI must have an API key configured (`AMEZMO_API_KEY` or its normal config file). Existing trusted IPs are preserved. Set the switch to `false` to disable this behavior.
 
@@ -75,7 +77,7 @@ ddev amezmo pull staging --skip-db
 
 `doctor` is read-only. A download can replace the local database and copy sensitive persistent storage files from Amezmo, so back up local work and follow your organization's data-handling rules.
 
-For Drupal projects, run any Drush command against a configured Amezmo environment through its local Drush site alias:
+For Drupal projects, run any Drush command against the site-local Drush installation in a configured Amezmo environment:
 
 ```bash
 ddev amezmo drush staging status
@@ -83,7 +85,7 @@ ddev amezmo drush production config:get system.site
 ddev amezmo drush staging user:login --uid=1
 ```
 
-The add-on loads the selected environment's `AMEZMO_DRUSH_ALIAS`, checks SSH access, and passes the command and arguments unchanged to the project's local `vendor/bin/drush`. Drush commands can change remote data or configuration; review the selected environment and command before running mutating operations.
+The add-on checks SSH access, changes to `AMEZMO_REMOTE_APP_ROOT`, and passes the configured `AMEZMO_SITE_URI`, command, and arguments to the environment's `vendor/bin/drush`. It does not require a local Drush installation or `drush/sites/self.site.yml`. Set `AMEZMO_REMOTE_CLI_PATH` when remote Drush is installed elsewhere. Drush commands can change remote data or configuration; review the selected environment and command before running mutating operations.
 
 `push` uploads the local database and persistent storage files to the selected Amezmo environment. DDEV displays a confirmation prompt, and the add-on prints an additional warning identifying the Amezmo target. Review the environment, local data, and paths carefully; uploading to production can overwrite important data. File uploads overwrite matching files but do not delete files already in the Amezmo environment. Database uploads replace the target database contents through the selected application CLI. Use `--skip-db` or `--skip-files` when only one asset type should be transferred.
 
@@ -97,7 +99,7 @@ ddev amezmo cli deployments get INSTANCE_ID DEPLOYMENT_ID
 
 These commands require PHP 8.3 or newer on the host. The API CLI manages Amezmo resources; it does not replace this add-on's database or persistent-storage transfers.
 
-Drupal database uploads use `vendor/bin/drush sql:cli` in the Amezmo application release by default. WordPress database uploads use `wp db import -`. Set `AMEZMO_REMOTE_CLI_PATH` in the environment profile when the application CLI is elsewhere. Custom adapters must set `AMEZMO_REMOTE_DB_IMPORT_COMMAND`; the command receives the uncompressed SQL export on standard input.
+Drupal database downloads, uploads, health checks, and arbitrary commands use `vendor/bin/drush` in the Amezmo application release by default. WordPress database operations use `wp`. Set `AMEZMO_REMOTE_CLI_PATH` in the environment profile when the application CLI is elsewhere. Custom adapters must set `AMEZMO_REMOTE_DB_IMPORT_COMMAND`; the command receives the uncompressed SQL export on standard input.
 
 ## Documentation
 

@@ -9,7 +9,7 @@ Production and staging profiles are installed independently. Drupal, WordPress, 
 
 ## Status and scope
 
-This add-on supports one MySQL-compatible database and one persistent storage directory per environment on macOS, Linux, and WSL2. Amezmo API discovery, multiple databases or storage mounts, Redis, Solr, workers, cron, environment-variable recreation, deployments, and native Windows are out of scope. The automated suite uses mocked SSH and does not prove compatibility with a live Amezmo account.
+This add-on supports one MySQL-compatible database and one persistent storage directory per environment on macOS, Linux, and WSL2. Guided setup uses the Amezmo API to discover environment configuration. Multiple databases or storage mounts, Redis, Solr, workers, cron, environment-variable recreation, deployments, and native Windows are out of scope. The automated suite uses mocked SSH and does not prove compatibility with a live Amezmo account.
 
 ## Prerequisites
 
@@ -33,11 +33,18 @@ For a local checkout:
 ddev add-on get /absolute/path/to/ddev-amezmo
 ```
 
-Installation creates production and staging profiles under `.ddev/providers/` and `.ddev/amezmo/environments/`. Edit the environment files and remove their `#ddev-generated` markers so upgrades preserve your settings.
+Installation creates production and staging profiles under `.ddev/providers/` and `.ddev/amezmo/environments/`. Start the guided setup to discover environment details through the bundled `amezmo-cli`:
+
+```bash
+ddev amezmo cli auth login
+ddev amezmo configure
+```
+
+The wizard asks you to select an Amezmo instance and then configures every environment returned for it, normally production and staging. Each environment gets independent API-derived defaults for the instance ID, application type, SSH endpoint, application root, site URI, and remote storage directory. The wizard asks for the remaining settings, shows one summary before writing anything, backs up existing profiles, and creates DDEV providers for newly discovered environment names.
 
 ## Configure an environment
 
-Set these values independently in `.ddev/amezmo/environments/production.env` and `staging.env`:
+The guided setup is recommended. For manual setup, set these values independently in `.ddev/amezmo/environments/production.env` and `staging.env`, then remove their `#ddev-generated` markers so upgrades preserve your settings:
 
 ```dotenv
 export AMEZMO_ENVIRONMENT=production

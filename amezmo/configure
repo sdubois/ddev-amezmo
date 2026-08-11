@@ -1,0 +1,313 @@
+#!/usr/bin/env bash
+#ddev-generated
+# shellcheck disable=SC2016
+
+set -Eeuo pipefail
+
+readonly PROGRAM="ddev-amezmo"
+readonly APP_ROOT="${DDEV_APPROOT:-$PWD}"
+readonly CLI_PATH="${APP_ROOT}/.ddev/amezmo/bin/amezmo-cli.phar"
+readonly PROVIDER_TEMPLATE="${APP_ROOT}/.ddev/amezmo/provider-template.yaml"
+
+instance_choice=""
+app_type=""
+ssh_user=""
+remote_app_root=""
+site_uri=""
+remote_files_path=""
+local_files_path=""
+auto_trust=""
+approved=""
+
+die() {
+  printf '%s: %s\n' "$PROGRAM" "$*" >&2
+  exit 1
+}
+
+require_php() {
+  command -v php >/dev/null 2>&1 \
+    || die "PHP 8.3 or newer is required to run guided configuration."
+  php -r 'exit(version_compare(PHP_VERSION, "8.3.0", ">=") ? 0 : 1);' \
+    || die "PHP 8.3 or newer is required to run guided configuration (found $(php -r 'echo PHP_VERSION;'))."
+}
+
+read_json() {
+  local code="$1"
+  shift
+  php -r '
+    $data = json_decode(stream_get_contents(STDIN), true);
+    if (!is_array($data)) {
+        fwrite(STDERR, "amezmo-cli returned invalid JSON.\n");
+        exit(1);
+    }
+    '"$code" "$@"
+}
+
+prompt_default() {
+  local variable="$1" prompt="$2" default_value="$3" answer
+  if [[ -n "$default_value" ]]; then
+    printf '%s [%s]: ' "$prompt" "$default_value" >&2
+  else
+    printf '%s: ' "$prompt" >&2
+  fi
+  IFS= read -r answer || die "guided configuration was cancelled."
+  printf -v "$variable" '%s' "${answer:-$default_value}"
+}
+
+prompt_yes_no() {
+  local variable="$1" prompt="$2" default_value="$3" answer
+  if [[ "$default_value" == "true" ]]; then
+    printf '%s [Y/n]: ' "$prompt" >&2
+  else
+    printf '%s [y/N]: ' "$prompt" >&2
+  fi
+  IFS= read -r answer || die "guided configuration was cancelled."
+  case "$answer" in
+    '') printf -v "$variable" '%s' "$default_value" ;;
+    y|Y|yes|YES|Yes) printf -v "$variable" '%s' true ;;
+    n|N|no|NO|No) printf -v "$variable" '%s' false ;;
+    *) die "answer yes or no." ;;
+  esac
+}
+
+choose_number() {
+  local variable="$1" prompt="$2" maximum="$3" answer
+  printf '%s [1]: ' "$prompt" >&2
+  IFS= read -r answer || die "guided configuration was cancelled."
+  answer="${answer:-1}"
+  if ! [[ "$answer" =~ ^[0-9]+$ ]] || (( answer < 1 || answer > maximum )); then
+    die "choose a number from 1 through $maximum."
+  fi
+  printf -v "$variable" '%s' "$answer"
+}
+
+validate_token() {
+  local label="$1" value="$2"
+  [[ "$value" =~ ^[A-Za-z0-9._@+-]+$ ]] \
+    || die "$label contains unsupported characters."
+}
+
+validate_path() {
+  local label="$1" value="$2"
+  [[ -n "$value" && "$value" == /* && "$value" != "/" ]] \
+    || die "$label must be a specific absolute path."
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] \
+    || die "$label contains a control character."
+  [[ "$value" =~ ^[A-Za-z0-9_./@+,:=\ -]+$ ]] \
+    || die "$label contains characters that cannot be used safely."
+}
+
+validate_local_path() {
+  local value="$1" part
+  [[ -n "$value" && "$value" != /* && "$value" != "." ]] \
+    || die "the local persistent storage path must be relative to the project root."
+  [[ "$value" =~ ^[A-Za-z0-9_./@+\ -]+$ ]] \
+    || die "the local persistent storage path contains characters that cannot be used safely."
+  IFS='/' read -r -a parts <<< "$value"
+  for part in "${parts[@]}"; do
+    [[ "$part" != ".." ]] || die "the local persistent storage path may not contain '..'."
+  done
+}
+
+dotenv_quote() {
+  local value="$1"
+  value="${value//\'/\'\\\'\'}"
+  printf "'%s'" "$value"
+}
+
+require_php
+[[ -r "$CLI_PATH" ]] || die "bundled amezmo-cli was not found at $CLI_PATH."
+[[ -r "$PROVIDER_TEMPLATE" ]] || die "provider template was not found at $PROVIDER_TEMPLATE."
+
+printf 'Reading Amezmo instances with the bundled amezmo-cli...\n' >&2
+instances_json="$(php "$CLI_PATH" instances list --output=json)" \
+  || die "could not list Amezmo instances. Run 'ddev amezmo cli auth login' and try again."
+
+instance_count="$(printf '%s' "$instances_json" | read_json 'echo count($data);')" \
+  || die "could not read the Amezmo instance list."
+(( instance_count > 0 )) || die "the Amezmo account has no instances."
+
+printf '%s' "$instances_json" | read_json '
+  foreach ($data as $index => $instance) {
+      printf("  %d) %s (ID %s)\n", $index + 1, $instance["name"] ?? "Unnamed", $instance["id"] ?? "unknown");
+  }
+' || die "could not display the Amezmo instance list."
+choose_number instance_choice "Choose an Amezmo instance" "$instance_count"
+
+instance_id="$(printf '%s' "$instances_json" | read_json '
+  $index = ((int) $argv[1]) - 1;
+  echo $data[$index]["id"] ?? "";
+' "$instance_choice")"
+instance_name="$(printf '%s' "$instances_json" | read_json '
+  $index = ((int) $argv[1]) - 1;
+  echo $data[$index]["name"] ?? "";
+' "$instance_choice")"
+environment_count="$(printf '%s' "$instances_json" | read_json '
+  $index = ((int) $argv[1]) - 1;
+  echo count($data[$index]["environments"] ?? []);
+' "$instance_choice")"
+(( environment_count > 0 )) || die "the selected Amezmo instance has no environments."
+
+printf '\nEnvironments for %s:\n' "$instance_name" >&2
+printf '%s' "$instances_json" | read_json '
+  $instanceIndex = ((int) $argv[1]) - 1;
+  foreach (($data[$instanceIndex]["environments"] ?? []) as $index => $environment) {
+      printf("  %d) %s (%s:%s)\n", $index + 1, $environment["name"] ?? "Unnamed", $environment["ssh_host"] ?? "unknown", $environment["ssh_port"] ?? "unknown");
+  }
+' "$instance_choice" || die "could not display the Amezmo environment list."
+
+environment_field() {
+  local environment_index="$1" field="$2"
+  printf '%s' "$instances_json" | read_json '
+    $instanceIndex = ((int) $argv[1]) - 1;
+    $environmentIndex = ((int) $argv[2]) - 1;
+    $value = $data[$instanceIndex]["environments"][$environmentIndex][$argv[3]] ?? "";
+    if (is_scalar($value)) { echo $value; }
+  ' "$instance_choice" "$environment_index" "$field"
+}
+
+validate_token "instance ID" "$instance_id"
+
+environment_names=()
+ssh_hosts=()
+ssh_ports=()
+app_types=()
+ssh_users=()
+remote_app_roots=()
+site_uris=()
+remote_files_paths=()
+local_files_paths=()
+auto_trust_values=()
+
+printf '\nAll %s environments will be configured. Press Enter to accept an Amezmo-derived default.\n' "$environment_count" >&2
+for (( environment_index = 1; environment_index <= environment_count; environment_index++ )); do
+  array_index=$((environment_index - 1))
+  environment="$(environment_field "$environment_index" name)"
+  ssh_host="$(environment_field "$environment_index" ssh_host)"
+  ssh_port="$(environment_field "$environment_index" ssh_port)"
+  api_app_type="$(environment_field "$environment_index" app_type)"
+  app_domain="$(environment_field "$environment_index" app_domain)"
+  container_root="$(environment_field "$environment_index" container_root_directory)"
+  remote_files_default="$(environment_field "$environment_index" storage_directory)"
+
+  validate_token "environment name" "$environment"
+  validate_token "SSH host" "$ssh_host"
+  if ! [[ "$ssh_port" =~ ^[0-9]+$ ]] || (( ssh_port < 1 || ssh_port > 65535 )); then
+    die "amezmo-cli returned an invalid SSH port for $environment."
+  fi
+
+  api_app_type="$(printf '%s' "$api_app_type" | tr '[:upper:]' '[:lower:]')"
+  case "$api_app_type" in
+    drupal) app_type_default=drupal; local_files_default=web/sites/default/files ;;
+    wordpress) app_type_default=wordpress; local_files_default=wp-content/uploads ;;
+    *) app_type_default=custom; local_files_default=storage ;;
+  esac
+  remote_app_root_default="${container_root%/}/current"
+  site_uri_default="${app_domain:+https://${app_domain}}"
+
+  printf '\nConfigure %s:\n' "$environment" >&2
+  prompt_default app_type "Application type (drupal, wordpress, or custom)" "$app_type_default"
+  prompt_default ssh_user "SSH user" "deployer"
+  prompt_default remote_app_root "Remote application root" "$remote_app_root_default"
+  prompt_default site_uri "Public site URI" "$site_uri_default"
+  prompt_default remote_files_path "Remote persistent storage path" "$remote_files_default"
+  prompt_default local_files_path "Local persistent storage path" "$local_files_default"
+  prompt_yes_no auto_trust "Offer to trust the current public IP after an SSH rejection?" true
+
+  case "$app_type" in drupal|wordpress|custom) ;; *) die "application type must be drupal, wordpress, or custom." ;; esac
+  validate_token "SSH user" "$ssh_user"
+  validate_path "remote application root" "$remote_app_root"
+  validate_path "remote persistent storage path" "$remote_files_path"
+  validate_local_path "$local_files_path"
+  [[ "$site_uri" =~ ^https?://[^[:space:]]+$ ]] \
+    || die "the public site URI must be a complete HTTP or HTTPS URL."
+
+  environment_names[array_index]="$environment"
+  ssh_hosts[array_index]="$ssh_host"
+  ssh_ports[array_index]="$ssh_port"
+  app_types[array_index]="$app_type"
+  ssh_users[array_index]="$ssh_user"
+  remote_app_roots[array_index]="$remote_app_root"
+  site_uris[array_index]="$site_uri"
+  remote_files_paths[array_index]="$remote_files_path"
+  local_files_paths[array_index]="$local_files_path"
+  auto_trust_values[array_index]="$auto_trust"
+done
+
+profile_dir="${APP_ROOT}/.ddev/amezmo/environments"
+provider_dir="${APP_ROOT}/.ddev/providers"
+
+printf '\nConfiguration summary for %s (ID %s):\n' "$instance_name" "$instance_id"
+for (( array_index = 0; array_index < environment_count; array_index++ )); do
+  environment="${environment_names[$array_index]}"
+  profile_file="${profile_dir}/${environment}.env"
+  provider_file="${provider_dir}/amezmo-${environment}.yaml"
+  printf '\n  %s:\n' "$environment"
+  printf '    Application:    %s\n' "${app_types[$array_index]}"
+  printf '    SSH endpoint:   %s@%s:%s\n' "${ssh_users[$array_index]}" "${ssh_hosts[$array_index]}" "${ssh_ports[$array_index]}"
+  printf '    Remote app root: %s\n' "${remote_app_roots[$array_index]}"
+  printf '    Site URI:       %s\n' "${site_uris[$array_index]}"
+  printf '    Storage:        %s -> %s\n' "${remote_files_paths[$array_index]}" "${local_files_paths[$array_index]}"
+  printf '    Profile:        %s\n' "$profile_file"
+  [[ -e "$profile_file" ]] && printf '    Existing profile will be replaced after a backup is created.\n'
+  [[ ! -e "$provider_file" ]] && printf '    Provider:       %s (new)\n' "$provider_file"
+done
+
+prompt_yes_no approved "Write this configuration?" false
+[[ "$approved" == "true" ]] || die "configuration was not written."
+
+mkdir -p "$profile_dir" "$provider_dir"
+profile_temp=""
+provider_temp=""
+cleanup() {
+  [[ -z "${profile_temp:-}" || ! -e "$profile_temp" ]] || rm -f -- "$profile_temp"
+  [[ -z "${provider_temp:-}" || ! -e "$provider_temp" ]] || rm -f -- "$provider_temp"
+}
+trap cleanup EXIT
+
+backup_files=()
+for (( array_index = 0; array_index < environment_count; array_index++ )); do
+  environment="${environment_names[$array_index]}"
+  profile_file="${profile_dir}/${environment}.env"
+  provider_file="${provider_dir}/amezmo-${environment}.yaml"
+  profile_temp="$(mktemp "${profile_dir}/.${environment}.env.XXXXXX")" \
+    || die "could not create a temporary profile file."
+
+  {
+    printf '# Generated by ddev amezmo configure. This project-owned profile is preserved during add-on upgrades.\n'
+    printf 'export AMEZMO_ENVIRONMENT=%s\n' "$(dotenv_quote "$environment")"
+    printf 'export AMEZMO_INSTANCE_ID=%s\n' "$(dotenv_quote "$instance_id")"
+    printf 'export AMEZMO_AUTO_TRUST_SSH_IP=%s\n' "$(dotenv_quote "${auto_trust_values[$array_index]}")"
+    printf 'export AMEZMO_APP_TYPE=%s\n' "$(dotenv_quote "${app_types[$array_index]}")"
+    printf 'export AMEZMO_SSH_HOST=%s\n' "$(dotenv_quote "${ssh_hosts[$array_index]}")"
+    printf 'export AMEZMO_SSH_PORT=%s\n' "$(dotenv_quote "${ssh_ports[$array_index]}")"
+    printf 'export AMEZMO_SSH_USER=%s\n' "$(dotenv_quote "${ssh_users[$array_index]}")"
+    printf 'export AMEZMO_REMOTE_APP_ROOT=%s\n' "$(dotenv_quote "${remote_app_roots[$array_index]}")"
+    printf 'export AMEZMO_SITE_URI=%s\n' "$(dotenv_quote "${site_uris[$array_index]}")"
+    printf 'export AMEZMO_REMOTE_FILES_PATH=%s\n' "$(dotenv_quote "${remote_files_paths[$array_index]}")"
+    printf 'export AMEZMO_LOCAL_FILES_PATH=%s\n' "$(dotenv_quote "${local_files_paths[$array_index]}")"
+  } > "$profile_temp"
+
+  backup_file=""
+  if [[ -e "$profile_file" ]]; then
+    backup_file="${profile_file}.bak.$(date +%Y%m%d%H%M%S)"
+    cp -p "$profile_file" "$backup_file" || die "could not back up the existing $environment profile."
+  fi
+  backup_files[array_index]="$backup_file"
+  mv "$profile_temp" "$profile_file" || die "could not install the $environment profile."
+
+  if [[ ! -e "$provider_file" ]]; then
+    provider_temp="$(mktemp "${provider_dir}/.amezmo-${environment}.yaml.XXXXXX")" \
+      || die "could not create a temporary provider file."
+    sed -e '/^#ddev-generated$/d' -e "s/__AMEZMO_ENVIRONMENT__/${environment}/g" "$PROVIDER_TEMPLATE" > "$provider_temp"
+    mv "$provider_temp" "$provider_file" || die "could not install the $environment provider configuration."
+  fi
+done
+
+printf '\nConfigured all %s Amezmo environments:\n' "$environment_count"
+for (( array_index = 0; array_index < environment_count; array_index++ )); do
+  environment="${environment_names[$array_index]}"
+  printf '  %s\n' "$environment"
+  [[ -z "${backup_files[$array_index]}" ]] || printf '    Previous profile: %s\n' "${backup_files[$array_index]}"
+done
+printf 'Next run: ddev restart, then run ddev amezmo doctor <environment> for each environment.\n'

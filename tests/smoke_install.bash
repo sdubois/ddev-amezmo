@@ -14,7 +14,9 @@ cd "$project_dir"
 ddev config --project-type=php --docroot=. --project-name="$project_name"
 ddev add-on get "$addon_root"
 test -x .ddev/amezmo/amezmo
+test -x .ddev/amezmo/configure
 test -x .ddev/commands/host/amezmo
+test -f .ddev/amezmo/provider-template.yaml
 test -f .ddev/amezmo/bin/amezmo-cli.phar
 test -f .ddev/amezmo/bin/amezmo-cli.phar.sha256
 test -f .ddev/providers/amezmo-production.yaml
@@ -25,5 +27,7 @@ ddev amezmo cli --version | grep -q 'amezmo-cli 0.1.0-beta.1'
 ddev add-on get "$addon_root"
 ddev add-on remove amezmo
 test ! -e .ddev/amezmo/amezmo
+test ! -e .ddev/amezmo/configure
+test ! -e .ddev/amezmo/provider-template.yaml
 test ! -e .ddev/amezmo/bin/amezmo-cli.phar
 test ! -e .ddev/amezmo/bin/amezmo-cli.phar.sha256

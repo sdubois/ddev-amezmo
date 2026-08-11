@@ -17,6 +17,8 @@ project_files:
   - providers/amezmo-production.yaml
   - providers/amezmo-staging.yaml
   - amezmo/amezmo
+  - amezmo/configure
+  - amezmo/provider-template.yaml
   - amezmo/bin/amezmo-cli.phar
   - amezmo/bin/amezmo-cli.phar.sha256
   - amezmo/environments/production.env
@@ -26,8 +28,8 @@ project_files:
 post_install_actions:
   - |
     #ddev-description:Show Amezmo setup instructions
-    chmod +x amezmo/amezmo commands/host/amezmo
-    echo "ddev-amezmo installed. Configure the application type, Amezmo SSH endpoint, application root, site URI, and persistent storage paths in .ddev/amezmo/environments/production.env and staging.env. Restart DDEV, then run 'ddev amezmo doctor production', 'ddev amezmo pull production', 'ddev amezmo drush staging status', or 'ddev amezmo cli whoami'."
+    chmod +x amezmo/amezmo amezmo/configure commands/host/amezmo
+    echo "ddev-amezmo installed. Run 'ddev amezmo configure' for guided API-assisted setup. Then restart DDEV and run 'ddev amezmo doctor <environment>'. You can also edit .ddev/amezmo/environments/*.env manually."
 
 removal_actions:
   - |

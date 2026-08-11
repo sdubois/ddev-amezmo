@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 #ddev-generated
-## Description: Download from, upload to, check, or run Drush on a named Amezmo environment
+## Description: Configure, download from, upload to, check, or run Drush on a named Amezmo environment
 ## Usage: amezmo <pull|push|doctor> <environment> [flags]
 ##        amezmo drush <environment> <command> [arguments]
+##        amezmo configure
 ##        amezmo cli <command> [arguments]
 ## Example: "ddev amezmo pull production"
+##          "ddev amezmo configure"
 ##          "ddev amezmo drush staging cache:rebuild"
 ##          "ddev amezmo cli whoami"
 
@@ -25,6 +27,14 @@ print_push_warning() {
 }
 
 action="${1:-}"
+
+if [[ "$action" == "configure" ]]; then
+  if [[ $# -ne 1 ]]; then
+    echo "Usage: ddev amezmo configure" >&2
+    exit 2
+  fi
+  exec "${DDEV_APPROOT}/.ddev/amezmo/configure"
+fi
 
 if [[ "$action" == "cli" ]]; then
   shift
@@ -90,6 +100,7 @@ case "$action" in
   *)
     echo "Usage: ddev amezmo <pull|push|doctor> <environment> [flags]" >&2
     echo "       ddev amezmo drush <environment> <command> [arguments]" >&2
+    echo "       ddev amezmo configure" >&2
     echo "       ddev amezmo cli <command> [arguments]" >&2
     exit 2
     ;;

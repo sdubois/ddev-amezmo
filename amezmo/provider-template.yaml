@@ -1,0 +1,32 @@
+#ddev-generated
+# Template used by `ddev amezmo configure` for environments that do not already have a provider.
+
+info_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile __AMEZMO_ENVIRONMENT__ info
+
+auth_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile __AMEZMO_ENVIRONMENT__ auth
+
+db_pull_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile __AMEZMO_ENVIRONMENT__ pull-db
+
+files_import_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile __AMEZMO_ENVIRONMENT__ pull-files
+
+db_push_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile __AMEZMO_ENVIRONMENT__ push-db
+
+files_push_command:
+  service: host
+  command: |
+    "${DDEV_APPROOT}/.ddev/amezmo/amezmo" --profile __AMEZMO_ENVIRONMENT__ push-files

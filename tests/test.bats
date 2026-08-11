@@ -26,9 +26,50 @@ setup() {
   grep -q 'providers/amezmo-staging.yaml' "$BATS_TEST_DIRNAME/../install.yaml"
   grep -q 'amezmo/environments/production.env' "$BATS_TEST_DIRNAME/../install.yaml"
   grep -q 'amezmo/environments/staging.env' "$BATS_TEST_DIRNAME/../install.yaml"
+  grep -q 'amezmo/configure' "$BATS_TEST_DIRNAME/../install.yaml"
+  grep -q 'amezmo/provider-template.yaml' "$BATS_TEST_DIRNAME/../install.yaml"
   grep -q 'amezmo/bin/amezmo-cli.phar' "$BATS_TEST_DIRNAME/../install.yaml"
   grep -q '^removal_actions:' "$BATS_TEST_DIRNAME/../install.yaml"
   grep -q 'rm -f amezmo/bin/amezmo-cli.phar' "$BATS_TEST_DIRNAME/../install.yaml"
+}
+
+@test "guided configure discovers and writes all environments for the selected instance" {
+  mkdir -p "$TEST_ROOT/.ddev/amezmo/bin" "$TEST_ROOT/.ddev/amezmo/environments" "$TEST_ROOT/.ddev/providers"
+  cp "$BATS_TEST_DIRNAME/../amezmo/configure" "$TEST_ROOT/.ddev/amezmo/configure"
+  cp "$BATS_TEST_DIRNAME/../amezmo/provider-template.yaml" "$TEST_ROOT/.ddev/amezmo/provider-template.yaml"
+  cp "$BATS_TEST_DIRNAME/fixtures/amezmo-cli.php" "$TEST_ROOT/.ddev/amezmo/bin/amezmo-cli.phar"
+  chmod +x "$TEST_ROOT/.ddev/amezmo/configure"
+
+  run bash -c '{ for _ in {1..15}; do printf "\n"; done; printf "y\n"; } | "$1"' _ "$TEST_ROOT/.ddev/amezmo/configure"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"All 2 environments will be configured"* ]]
+  [[ "$output" == *"Configured all 2 Amezmo environments"* ]]
+
+  for environment in production staging; do
+    profile="$TEST_ROOT/.ddev/amezmo/environments/${environment}.env"
+    provider="$TEST_ROOT/.ddev/providers/amezmo-${environment}.yaml"
+    grep -q "AMEZMO_INSTANCE_ID='4321'" "$profile"
+    grep -q "AMEZMO_LOCAL_FILES_PATH='web/sites/default/files'" "$profile"
+    ! grep -q '^#ddev-generated$' "$profile"
+    grep -q -- "--profile ${environment} pull-db" "$provider"
+    ! grep -q '__AMEZMO_ENVIRONMENT__' "$provider"
+    ! grep -q '^#ddev-generated$' "$provider"
+  done
+  grep -q "AMEZMO_SSH_HOST='production.example.amezmo.co'" "$TEST_ROOT/.ddev/amezmo/environments/production.env"
+  grep -q "AMEZMO_REMOTE_APP_ROOT='/webroot/current'" "$TEST_ROOT/.ddev/amezmo/environments/production.env"
+  grep -q "AMEZMO_SSH_HOST='staging.example.amezmo.co'" "$TEST_ROOT/.ddev/amezmo/environments/staging.env"
+  grep -q "AMEZMO_REMOTE_APP_ROOT='/webroot/staging-example/current'" "$TEST_ROOT/.ddev/amezmo/environments/staging.env"
+}
+
+@test "amezmo configure delegates without requiring an environment argument" {
+  mkdir -p "$TEST_ROOT/.ddev/amezmo"
+  make_fake_configure="$TEST_ROOT/.ddev/amezmo/configure"
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" configured' > "$make_fake_configure"
+  chmod +x "$make_fake_configure"
+
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" configure
+  [ "$status" -eq 0 ]
+  [ "$output" = "configured" ]
 }
 
 @test "bundled amezmo-cli is dispatched without an environment" {

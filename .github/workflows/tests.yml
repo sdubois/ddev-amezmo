@@ -37,7 +37,7 @@ jobs:
       - name: Install test tools
         run: sudo apt-get update && sudo apt-get install -y bats shellcheck python3-yaml
       - name: Validate shell
-        run: shellcheck amezmo/amezmo commands/host/amezmo tests/*.bash
+        run: shellcheck amezmo/amezmo amezmo/configure commands/host/amezmo tests/*.bash
       - name: Validate YAML
         run: python3 -c 'import pathlib,yaml; [yaml.safe_load(p.read_text()) for p in pathlib.Path(".").rglob("*.yaml")]'
       - name: Run unit tests

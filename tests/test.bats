@@ -56,9 +56,13 @@ setup() {
     ! grep -q '^#ddev-generated$' "$provider"
   done
   grep -q "AMEZMO_SSH_HOST='production.example.amezmo.co'" "$TEST_ROOT/.ddev/amezmo/environments/production.env"
+  grep -q "AMEZMO_SSH_USER=''" "$TEST_ROOT/.ddev/amezmo/environments/production.env"
   grep -q "AMEZMO_REMOTE_APP_ROOT='/webroot/current'" "$TEST_ROOT/.ddev/amezmo/environments/production.env"
+  grep -q "AMEZMO_SITE_URI=''" "$TEST_ROOT/.ddev/amezmo/environments/production.env"
   grep -q "AMEZMO_SSH_HOST='staging.example.amezmo.co'" "$TEST_ROOT/.ddev/amezmo/environments/staging.env"
+  grep -q "AMEZMO_SSH_USER=''" "$TEST_ROOT/.ddev/amezmo/environments/staging.env"
   grep -q "AMEZMO_REMOTE_APP_ROOT='/webroot/staging-example/current'" "$TEST_ROOT/.ddev/amezmo/environments/staging.env"
+  grep -q "AMEZMO_SITE_URI=''" "$TEST_ROOT/.ddev/amezmo/environments/staging.env"
 }
 
 @test "amezmo configure delegates without requiring an environment argument" {
@@ -236,6 +240,20 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   [[ "$output" == *"AMEZMO_SSH_HOST is empty"* ]]
 }
 
+@test "SSH user defaults to deployer when no override is configured" {
+  export AMEZMO_SSH_USER=
+  run "$HELPER" info
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deployer@example.test:2222"* ]]
+}
+
+@test "configured SSH user overrides the deployer default" {
+  export AMEZMO_SSH_USER=release-user
+  run "$HELPER" info
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"release-user@example.test:2222"* ]]
+}
+
 @test "doctor succeeds with mocked dependencies" {
   run "$HELPER" doctor
   [ "$status" -eq 0 ]
@@ -360,11 +378,42 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   grep -Fq "'O'\\''Brien; touch /tmp/bad'" "$BATS_TEST_TMPDIR/drush.remote"
 }
 
-@test "Drush action requires the environment site URI" {
+@test "Drush action uses Amezmo's default site URI when no override is configured" {
+  export AMEZMO_INSTANCE_ID=3503
   export AMEZMO_SITE_URI=
+  mkdir -p "$TEST_ROOT/.ddev/amezmo/bin"
+  : > "$TEST_ROOT/.ddev/amezmo/bin/amezmo-cli.phar"
+  make_fake php '#!/usr/bin/env bash
+if [[ "${1:-}" == "-r" ]]; then
+  printf "%s" "staging-default.example.amezmo.co"
+elif [[ "$*" == *"environments get 3503 staging"* ]]; then
+  printf "%s\n" '\''{"app_domain":"staging-default.example.amezmo.co"}'\''
+else
+  exit 2
+fi'
+
+  run "$HELPER" drush status
+  [ "$status" -eq 0 ]
+  grep -q "'--uri=https://staging-default.example.amezmo.co'" "$BATS_TEST_TMPDIR/drush.remote"
+}
+
+@test "Drush action explains when Amezmo has no default site URI" {
+  export AMEZMO_INSTANCE_ID=3503
+  export AMEZMO_SITE_URI=
+  mkdir -p "$TEST_ROOT/.ddev/amezmo/bin"
+  : > "$TEST_ROOT/.ddev/amezmo/bin/amezmo-cli.phar"
+  make_fake php '#!/usr/bin/env bash
+if [[ "${1:-}" == "-r" ]]; then
+  exit 0
+elif [[ "$*" == *"environments get 3503 staging"* ]]; then
+  printf "%s\n" "{}"
+else
+  exit 2
+fi'
+
   run "$HELPER" drush status
   [ "$status" -ne 0 ]
-  [[ "$output" == *"Amezmo setting AMEZMO_SITE_URI is empty"* ]]
+  [[ "$output" == *"Amezmo did not return a default site URI"* ]]
 }
 
 @test "Drush action returns the Drush exit status" {

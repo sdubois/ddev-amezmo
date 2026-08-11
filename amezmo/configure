@@ -179,7 +179,7 @@ remote_files_paths=()
 local_files_paths=()
 auto_trust_values=()
 
-printf '\nAll %s environments will be configured. Press Enter to accept an Amezmo-derived default.\n' "$environment_count" >&2
+printf '\nAll %s environments will be configured. Press Enter to accept each displayed default or leave an optional override empty.\n' "$environment_count" >&2
 for (( environment_index = 1; environment_index <= environment_count; environment_index++ )); do
   array_index=$((environment_index - 1))
   environment="$(environment_field "$environment_index" name)"
@@ -207,20 +207,24 @@ for (( environment_index = 1; environment_index <= environment_count; environmen
 
   printf '\nConfigure %s:\n' "$environment" >&2
   prompt_default app_type "Application type (drupal, wordpress, or custom)" "$app_type_default"
-  prompt_default ssh_user "SSH user" "deployer"
+  prompt_default ssh_user "SSH user override (optional; default deployer)" ""
   prompt_default remote_app_root "Remote application root" "$remote_app_root_default"
-  prompt_default site_uri "Public site URI" "$site_uri_default"
+  prompt_default site_uri "Site URI override (optional; Amezmo default ${site_uri_default})" ""
   prompt_default remote_files_path "Remote persistent storage path" "$remote_files_default"
   prompt_default local_files_path "Local persistent storage path" "$local_files_default"
   prompt_yes_no auto_trust "Offer to trust the current public IP after an SSH rejection?" true
 
   case "$app_type" in drupal|wordpress|custom) ;; *) die "application type must be drupal, wordpress, or custom." ;; esac
-  validate_token "SSH user" "$ssh_user"
+  if [[ -n "$ssh_user" ]]; then
+    validate_token "SSH user" "$ssh_user"
+  fi
   validate_path "remote application root" "$remote_app_root"
   validate_path "remote persistent storage path" "$remote_files_path"
   validate_local_path "$local_files_path"
-  [[ "$site_uri" =~ ^https?://[^[:space:]]+$ ]] \
-    || die "the public site URI must be a complete HTTP or HTTPS URL."
+  if [[ -n "$site_uri" ]]; then
+    [[ "$site_uri" =~ ^https?://[^[:space:]]+$ ]] \
+      || die "the site URI override must be a complete HTTP or HTTPS URL."
+  fi
 
   environment_names[array_index]="$environment"
   ssh_hosts[array_index]="$ssh_host"
@@ -244,9 +248,13 @@ for (( array_index = 0; array_index < environment_count; array_index++ )); do
   provider_file="${provider_dir}/amezmo-${environment}.yaml"
   printf '\n  %s:\n' "$environment"
   printf '    Application:    %s\n' "${app_types[$array_index]}"
-  printf '    SSH endpoint:   %s@%s:%s\n' "${ssh_users[$array_index]}" "${ssh_hosts[$array_index]}" "${ssh_ports[$array_index]}"
+  printf '    SSH endpoint:   %s@%s:%s\n' "${ssh_users[$array_index]:-deployer}" "${ssh_hosts[$array_index]}" "${ssh_ports[$array_index]}"
   printf '    Remote app root: %s\n' "${remote_app_roots[$array_index]}"
-  printf '    Site URI:       %s\n' "${site_uris[$array_index]}"
+  if [[ -n "${site_uris[$array_index]}" ]]; then
+    printf '    Site URI:       %s (override)\n' "${site_uris[$array_index]}"
+  else
+    printf '    Site URI:       Amezmo default\n'
+  fi
   printf '    Storage:        %s -> %s\n' "${remote_files_paths[$array_index]}" "${local_files_paths[$array_index]}"
   printf '    Profile:        %s\n' "$profile_file"
   [[ -e "$profile_file" ]] && printf '    Existing profile will be replaced after a backup is created.\n'

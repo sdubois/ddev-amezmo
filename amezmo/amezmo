@@ -71,14 +71,34 @@ validate_local_path() {
 validate_ssh_config() {
   require_value AMEZMO_SSH_HOST
   require_value AMEZMO_SSH_PORT
-  require_value AMEZMO_SSH_USER
+  AMEZMO_SSH_USER="${AMEZMO_SSH_USER:-deployer}"
   validate_token AMEZMO_SSH_HOST
   validate_token AMEZMO_SSH_USER
   validate_port AMEZMO_SSH_PORT
 }
 
 validate_site_uri() {
-  require_value AMEZMO_SITE_URI
+  if [[ -z "${AMEZMO_SITE_URI:-}" ]]; then
+    validate_instance_id
+    require_value AMEZMO_ENVIRONMENT
+    validate_token AMEZMO_ENVIRONMENT
+    require_command php
+
+    local cli_path environment_json app_domain
+    cli_path="$(amezmo_cli_path)"
+    [[ -r "$cli_path" ]] \
+      || die "The Amezmo default site URI requires the bundled amezmo-cli at $cli_path."
+    environment_json="$(php "$cli_path" environments get "$AMEZMO_INSTANCE_ID" "$AMEZMO_ENVIRONMENT" --output=json --no-interaction)" \
+      || die "Could not read the default site URI from Amezmo. Set AMEZMO_SITE_URI explicitly or authenticate amezmo-cli."
+    app_domain="$(printf '%s' "$environment_json" | php -r '
+      $data = json_decode(stream_get_contents(STDIN), true);
+      $value = is_array($data) ? ($data["app_domain"] ?? "") : "";
+      if (is_scalar($value)) { echo $value; }
+    ')" || die "Could not parse the default site URI returned by Amezmo."
+    [[ -n "$app_domain" ]] \
+      || die "Amezmo did not return a default site URI. Set AMEZMO_SITE_URI explicitly for the selected environment."
+    AMEZMO_SITE_URI="https://${app_domain}"
+  fi
   [[ "$AMEZMO_SITE_URI" != *$'\n'* && "$AMEZMO_SITE_URI" != *$'\r'* ]] \
     || die "AMEZMO_SITE_URI contains a control character."
   [[ "$AMEZMO_SITE_URI" =~ ^https?://[^[:space:]]+$ ]] \
@@ -298,7 +318,7 @@ pull_db() {
       build_remote_drush_command sql:dump --gzip --no-interaction
       printf 'Downloading the Amezmo database from %s using site-local Drush...\n' "${AMEZMO_ENVIRONMENT:-unknown}"
       if ! remote_command "$REMOTE_DRUSH_COMMAND" > "$dump_file" 2>"$tmp_dir/cli.stderr"; then
-        die "Could not download the Amezmo database with Drush. Verify AMEZMO_REMOTE_APP_ROOT, AMEZMO_REMOTE_CLI_PATH, AMEZMO_SITE_URI, and the selected environment."
+        die "Could not download the Amezmo database with Drush. Verify AMEZMO_REMOTE_APP_ROOT, AMEZMO_REMOTE_CLI_PATH, the site URI, and the selected environment."
       fi
       ;;
     wordpress)
@@ -384,7 +404,7 @@ push_db() {
       build_remote_drush_command sql:cli
       printf 'Uploading the local database to Amezmo %s with Drush...\n' "${AMEZMO_ENVIRONMENT:-unknown}"
       gzip -dc "$dump_file" | remote_command "$REMOTE_DRUSH_COMMAND" \
-        || die "Could not upload the database to Amezmo with Drush. Verify AMEZMO_REMOTE_APP_ROOT, AMEZMO_REMOTE_CLI_PATH, AMEZMO_SITE_URI, and the selected environment."
+        || die "Could not upload the database to Amezmo with Drush. Verify AMEZMO_REMOTE_APP_ROOT, AMEZMO_REMOTE_CLI_PATH, the site URI, and the selected environment."
       ;;
     wordpress)
       remote_cli="${AMEZMO_REMOTE_CLI_PATH:-wp}"
@@ -458,7 +478,7 @@ doctor() {
     drupal)
       build_remote_drush_command status --no-interaction
       if ! remote_command "$REMOTE_DRUSH_COMMAND" >/dev/null 2>/dev/null; then
-        die "Drush database connectivity failed. Verify AMEZMO_REMOTE_APP_ROOT, AMEZMO_REMOTE_CLI_PATH, AMEZMO_SITE_URI, and the selected environment."
+        die "Drush database connectivity failed. Verify AMEZMO_REMOTE_APP_ROOT, AMEZMO_REMOTE_CLI_PATH, the site URI, and the selected environment."
       fi
       ;;
     wordpress)

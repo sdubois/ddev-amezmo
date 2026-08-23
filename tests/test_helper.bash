@@ -38,7 +38,7 @@ if [[ "$last_arg" == *"/drush"* ]]; then
     [[ "${FAKE_DUMP_FAIL:-}" != 1 ]] || exit 24
     printf "%s\n" "diagnostic output belongs on stderr" >&2
     printf "%s\n" "CREATE TABLE test (id int);" | gzip
-  elif [[ "$last_arg" == *"sql:cli"* ]]; then
+  elif [[ "$last_arg" == *"sql:connect"* ]]; then
     cat >/dev/null
   fi
 elif [[ "$*" == *"db export"* ]]; then

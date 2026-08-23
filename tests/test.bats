@@ -146,7 +146,8 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   [[ "$output" == *"Target: staging (drupal)"* ]]
   [[ "$output" == *"Amezmo environment copy completed: production -> staging"* ]]
   [ "$(grep -c "sql:dump" "$BATS_TEST_TMPDIR/ssh.calls")" -eq 2 ]
-  [ "$(grep -c "sql:cli" "$BATS_TEST_TMPDIR/ssh.calls")" -eq 1 ]
+  [ "$(grep -c "sql:connect" "$BATS_TEST_TMPDIR/ssh.calls")" -eq 1 ]
+  [ "$(grep -c "sql:cli" "$BATS_TEST_TMPDIR/ssh.calls")" -eq 0 ]
   backup_file="$(find "$TEST_ROOT/.ddev/.downloads/amezmo-backups" -type f -path '*/staging-before-copy-*/db.sql.gz' -print -quit)"
   [ -n "$backup_file" ]
   gzip -t "$backup_file"
@@ -361,6 +362,8 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   [ "$status" -eq 0 ]
   [[ "$output" == *"WARNING: This will upload your local database"* ]]
   [[ "$output" == *"Database upload completed"* ]]
+  grep -Fq "cd '/webroot/current' && \$('vendor/bin/drush' '--uri=https://staging.example.test' 'sql:connect')" "$BATS_TEST_TMPDIR/drush.remote"
+  ! grep -q "sql:cli" "$BATS_TEST_TMPDIR/drush.remote"
 }
 
 @test "files-only push invokes rsync without remote deletion" {

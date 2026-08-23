@@ -127,7 +127,7 @@ ddev amezmo cli deployments get INSTANCE_ID DEPLOYMENT_ID
 
 These commands require PHP 8.3 or newer on the host. The API CLI manages Amezmo resources; it does not replace this add-on's database or persistent-storage transfers.
 
-Drupal database downloads, uploads, health checks, and arbitrary commands use `vendor/bin/drush` in the Amezmo application release by default. WordPress database operations use `wp`. Set `AMEZMO_REMOTE_CLI_PATH` in the environment profile when the application CLI is elsewhere. Custom adapters must set `AMEZMO_REMOTE_DB_IMPORT_COMMAND`; the command receives the uncompressed SQL export on standard input.
+Drupal database downloads, health checks, and arbitrary commands use `vendor/bin/drush` in the Amezmo application release by default. Drupal uploads ask `drush sql:connect` for the native database-client command and stream the validated SQL export directly into that client, avoiding the slower `sql:cli` stdin path. WordPress database operations use `wp`. Set `AMEZMO_REMOTE_CLI_PATH` in the environment profile when the application CLI is elsewhere. Custom adapters must set `AMEZMO_REMOTE_DB_IMPORT_COMMAND`; the command receives the uncompressed SQL export on standard input.
 
 ## Documentation
 

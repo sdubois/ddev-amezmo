@@ -22,11 +22,13 @@ setup_fixture() {
   export AMEZMO_REMOTE_FILES_PATH=/webroot/storage/public
   export AMEZMO_LOCAL_FILES_PATH=web/sites/default/files
   unset FAKE_SSH_FAIL FAKE_SSH_FAIL_ONCE FAKE_DUMP_FAIL FAKE_DRUSH_FAIL FAKE_RSYNC_FAIL FAKE_RSYNC_NO_PROTECT_ARGS FAKE_CAPTURE
+  unset DDEV_AMEZMO_TRANSFER_DB_FILE DDEV_AMEZMO_TRANSFER_FILES_PATH DDEV_AMEZMO_TRANSFER_PURPOSE DDEV_AMEZMO_COPY_SOURCE DDEV_AMEZMO_COPY_ASSET
 
   make_fake ssh '#!/usr/bin/env bash
 set -eu
 if [[ "${FAKE_SSH_FAIL:-}" == 1 ]]; then exit 23; fi
 if [[ "${FAKE_SSH_FAIL_ONCE:-}" == 1 && ! -e "${BATS_TEST_TMPDIR}/ssh.failed" ]]; then touch "${BATS_TEST_TMPDIR}/ssh.failed"; exit 23; fi
+printf "%s\n" "$*" >> "${BATS_TEST_TMPDIR}/ssh.calls"
 last_arg="${!#}"
 if [[ "$last_arg" == *"/drush"* ]]; then
   printf "%s\n" "$last_arg" > "${BATS_TEST_TMPDIR}/drush.remote"
@@ -53,7 +55,29 @@ if [[ "${1:-}" == "--help" ]]; then
   exit 0
 fi
 [[ "${FAKE_RSYNC_FAIL:-}" != 1 ]] || exit 25
+printf "%s\n" "$*" >> "${BATS_TEST_TMPDIR}/rsync.calls"
 printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/rsync.args"'
+}
+
+install_test_profile() {
+  local environment="$1" host="$2" port="$3" uri="$4" remote_files_path="$5" app_type="${6:-drupal}"
+  local profile_dir="$TEST_ROOT/.ddev/amezmo/environments"
+  mkdir -p "$profile_dir" "$TEST_ROOT/.ddev/amezmo"
+  cp "$HELPER" "$TEST_ROOT/.ddev/amezmo/amezmo"
+  chmod +x "$TEST_ROOT/.ddev/amezmo/amezmo"
+  {
+    printf 'export AMEZMO_ENVIRONMENT=%q\n' "$environment"
+    printf 'export AMEZMO_INSTANCE_ID=%q\n' 3503
+    printf 'export AMEZMO_AUTO_TRUST_SSH_IP=%q\n' false
+    printf 'export AMEZMO_APP_TYPE=%q\n' "$app_type"
+    printf 'export AMEZMO_SSH_HOST=%q\n' "$host"
+    printf 'export AMEZMO_SSH_PORT=%q\n' "$port"
+    printf 'export AMEZMO_SSH_USER=%q\n' deployer
+    printf 'export AMEZMO_REMOTE_APP_ROOT=%q\n' /webroot/current
+    printf 'export AMEZMO_SITE_URI=%q\n' "$uri"
+    printf 'export AMEZMO_REMOTE_FILES_PATH=%q\n' "$remote_files_path"
+    printf 'export AMEZMO_LOCAL_FILES_PATH=%q\n' web/sites/default/files
+  } > "$profile_dir/$environment.env"
 }
 
 make_fake() {

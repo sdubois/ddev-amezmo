@@ -135,6 +135,70 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   [[ "$output" == *"upload your local database and persistent storage files to Amezmo's production environment"* ]]
 }
 
+@test "amezmo copy replaces the target database after creating a validated backup" {
+  install_test_profile production production.example.test 2201 https://production.example.test /webroot/storage/production
+  install_test_profile staging staging.example.test 2202 https://staging.example.test /webroot/storage/staging
+
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" copy \
+    --from production --to staging --db -y
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Source: production (drupal)"* ]]
+  [[ "$output" == *"Target: staging (drupal)"* ]]
+  [[ "$output" == *"Amezmo environment copy completed: production -> staging"* ]]
+  [ "$(grep -c "sql:dump" "$BATS_TEST_TMPDIR/ssh.calls")" -eq 2 ]
+  [ "$(grep -c "sql:cli" "$BATS_TEST_TMPDIR/ssh.calls")" -eq 1 ]
+  backup_file="$(find "$TEST_ROOT/.ddev/.downloads/amezmo-backups" -type f -path '*/staging-before-copy-*/db.sql.gz' -print -quit)"
+  [ -n "$backup_file" ]
+  gzip -t "$backup_file"
+  [ ! -e "$TEST_ROOT/.ddev/.downloads/db.sql.gz" ]
+  [ -z "$(find "$TMPDIR" -maxdepth 1 -type d -name 'ddev-amezmo-copy.*' -print -quit)" ]
+}
+
+@test "amezmo copy relays files without deleting unmatched target files" {
+  install_test_profile production production.example.test 2201 https://production.example.test /webroot/storage/production
+  install_test_profile staging staging.example.test 2202 https://staging.example.test /webroot/storage/staging
+
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" copy \
+    --from production --to staging --files -y
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$BATS_TEST_TMPDIR/rsync.calls")" -eq 2 ]
+  sed -n '1p' "$BATS_TEST_TMPDIR/rsync.calls" | grep -q 'deployer@production.example.test:/webroot/storage/production/'
+  sed -n '2p' "$BATS_TEST_TMPDIR/rsync.calls" | grep -q 'deployer@staging.example.test:/webroot/storage/staging/'
+  ! grep -q -- '--delete' "$BATS_TEST_TMPDIR/rsync.calls"
+  [ -z "$(find "$TMPDIR" -maxdepth 1 -type d -name 'ddev-amezmo-copy.*' -print -quit)" ]
+}
+
+@test "amezmo copy requires explicit assets and distinct environments" {
+  install_test_profile staging staging.example.test 2202 https://staging.example.test /webroot/storage/staging
+
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" copy --from staging --to staging --db -y
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"source and target environments must be different"* ]]
+
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" copy --from production --to staging -y
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requires --db, --files, or both"* ]]
+}
+
+@test "amezmo copy blocks production targets without a separate override" {
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" copy \
+    --from staging --to production --db -y
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"copying into production is blocked"* ]]
+  [[ "$output" == *"--allow-production-target"* ]]
+}
+
+@test "amezmo copy requires confirmation in non-interactive mode" {
+  install_test_profile production production.example.test 2201 https://production.example.test /webroot/storage/production
+  install_test_profile staging staging.example.test 2202 https://staging.example.test /webroot/storage/staging
+
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" copy \
+    --from production --to staging --db
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"copy requires -y in non-interactive mode"* ]]
+  [ ! -d "$TEST_ROOT/.ddev/.downloads/amezmo-backups" ]
+}
+
 @test "generated profiles keep environments and site URIs independent" {
   production="$BATS_TEST_DIRNAME/../amezmo/environments/production.env"
   staging="$BATS_TEST_DIRNAME/../amezmo/environments/staging.env"

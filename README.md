@@ -3,7 +3,7 @@
 
 # ddev-amezmo
 
-`ddev-amezmo` is a DDEV integration for CMS and framework applications hosted on [Amezmo](https://www.amezmo.com/). It downloads a selected Amezmo environment's database and persistent storage files into a local DDEV project and can upload local database and persistent storage files back to a selected environment. It never deploys application code.
+`ddev-amezmo` is a DDEV integration for CMS and framework applications hosted on [Amezmo](https://www.amezmo.com/). It downloads a selected Amezmo environment's database and persistent storage files into a local DDEV project, uploads local data to a selected environment, and copies data between configured Amezmo environments. It never deploys application code.
 
 Production and staging profiles are installed independently. Drupal, WordPress, and custom application adapters are supported.
 
@@ -73,6 +73,7 @@ ddev restart
 ddev amezmo doctor production
 ddev amezmo pull production
 ddev amezmo push staging
+ddev amezmo copy --from production --to staging --db --files
 ddev amezmo drush staging cache:rebuild
 ddev amezmo cli whoami
 ```
@@ -97,6 +98,24 @@ ddev amezmo drush staging user:login --uid=1
 The add-on checks SSH access, changes to `AMEZMO_REMOTE_APP_ROOT`, and passes either the configured `AMEZMO_SITE_URI` override or Amezmo's default application URL, followed by the command and arguments, to the environment's `vendor/bin/drush`. It does not require a local Drush installation or `drush/sites/self.site.yml`. Set `AMEZMO_REMOTE_CLI_PATH` when remote Drush is installed elsewhere. Drush commands can change remote data or configuration; review the selected environment and command before running mutating operations.
 
 `push` uploads the local database and persistent storage files to the selected Amezmo environment. DDEV displays a confirmation prompt, and the add-on prints an additional warning identifying the Amezmo target. Review the environment, local data, and paths carefully; uploading to production can overwrite important data. File uploads overwrite matching files but do not delete files already in the Amezmo environment. Database uploads replace the target database contents through the selected application CLI. Use `--skip-db` or `--skip-files` when only one asset type should be transferred.
+
+## Copy between Amezmo environments
+
+Use `copy` when the source and target are both configured Amezmo environments. Select the database, persistent files, or both explicitly:
+
+```bash
+ddev amezmo copy --from production --to staging --db
+ddev amezmo copy --from production --to staging --files
+ddev amezmo copy --from production --to staging --db --files
+```
+
+The command displays the source, target, and selected data, then requires you to type the target environment name. Use `-y` only when the direction has already been verified or for non-interactive operation. Source and target must be different and use the same application adapter. Copying into an environment named `production` is blocked unless `--allow-production-target` is also supplied.
+
+Database copies do not import into the local DDEV database. Before replacement, the command downloads and validates a backup of the target database under `.ddev/.downloads/amezmo-backups/`. It then downloads the source export to a temporary directory, validates its gzip stream, and imports it into the target. The temporary source export is removed after the command exits; the target backup is retained.
+
+Because `rsync` cannot transfer directly between two remote endpoints, file copies download into a temporary host directory and then upload to the target. Matching target files are overwritten, unmatched target files are not deleted, and the temporary directory is removed after the command exits. Ensure the host has enough free space for the selected database, files, and retained backup.
+
+A production database may contain real users, sessions, credentials, queued mail, and notification state. Run the application's staging sanitization and cache-rebuild procedures after copying. The add-on does not alter copied application data automatically.
 
 The add-on also bundles the pinned `amezmo-cli` `v0.1.0-beta.1` release for Amezmo API operations:
 

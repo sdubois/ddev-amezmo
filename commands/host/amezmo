@@ -1,16 +1,136 @@
 #!/usr/bin/env bash
 #ddev-generated
-## Description: Configure, download from, upload to, check, or run Drush on a named Amezmo environment
+## Description: Configure, copy, download from, upload to, check, or run Drush on Amezmo environments
 ## Usage: amezmo <pull|push|doctor> <environment> [flags]
 ##        amezmo drush <environment> <command> [arguments]
+##        amezmo copy --from <environment> --to <environment> <--db|--files> [--db|--files] [-y]
 ##        amezmo configure
 ##        amezmo cli <command> [arguments]
 ## Example: "ddev amezmo pull production"
+##          "ddev amezmo copy --from production --to staging --db -y"
 ##          "ddev amezmo configure"
 ##          "ddev amezmo drush staging cache:rebuild"
 ##          "ddev amezmo cli whoami"
 
 set -Eeuo pipefail
+
+die() {
+  printf 'ddev-amezmo: %s\n' "$*" >&2
+  exit 1
+}
+
+copy_environments() {
+  local source_environment="" target_environment="" copy_db=false copy_files=false assume_yes=false
+  local allow_production_target=false helper temp_dir backup_dir backup_bundle backup_file source_adapter target_adapter answer
+
+  shift
+  while (( $# )); do
+    case "$1" in
+      --from)
+        (( $# >= 2 )) || die "--from requires an environment name."
+        source_environment="$2"
+        shift 2
+        ;;
+      --to)
+        (( $# >= 2 )) || die "--to requires an environment name."
+        target_environment="$2"
+        shift 2
+        ;;
+      --db) copy_db=true; shift ;;
+      --files) copy_files=true; shift ;;
+      -y|--yes) assume_yes=true; shift ;;
+      --allow-production-target) allow_production_target=true; shift ;;
+      *) die "unknown copy option '$1'." ;;
+    esac
+  done
+
+  [[ "$source_environment" =~ ^[A-Za-z0-9._-]+$ ]] \
+    || die "copy requires --from followed by a valid environment name."
+  [[ "$target_environment" =~ ^[A-Za-z0-9._-]+$ ]] \
+    || die "copy requires --to followed by a valid environment name."
+  [[ "$source_environment" != "$target_environment" ]] \
+    || die "copy source and target environments must be different."
+  [[ "$copy_db" == true || "$copy_files" == true ]] \
+    || die "copy requires --db, --files, or both."
+  if [[ "$target_environment" == "production" && "$allow_production_target" != true ]]; then
+    die "copying into production is blocked. Add --allow-production-target only after verifying the direction and target."
+  fi
+
+  helper="${DDEV_APPROOT}/.ddev/amezmo/amezmo"
+  [[ -x "$helper" ]] || die "transfer helper was not found at $helper."
+  source_adapter="$("$helper" --profile "$source_environment" adapter)"
+  target_adapter="$("$helper" --profile "$target_environment" adapter)"
+  [[ "$source_adapter" == "$target_adapter" ]] \
+    || die "source uses the $source_adapter adapter but target uses $target_adapter; cross-adapter copies are not supported."
+
+  printf '\nAmezmo environment copy\n' >&2
+  printf '  Source: %s (%s)\n' "$source_environment" "$source_adapter" >&2
+  printf '  Target: %s (%s)\n' "$target_environment" "$target_adapter" >&2
+  [[ "$copy_db" == true ]] && printf '  Database: replace target after creating a validated backup\n' >&2
+  [[ "$copy_files" == true ]] && printf '  Files: overwrite matching target files without deleting other files\n' >&2
+  printf 'The source environment will not be modified.\n\n' >&2
+
+  if [[ "$assume_yes" != true ]]; then
+    if [[ "${DDEV_NONINTERACTIVE:-false}" == "true" ]]; then
+      die "copy requires -y in non-interactive mode."
+    fi
+    printf "Type the target environment name (%s) to continue: " "$target_environment" >&2
+    IFS= read -r answer
+    [[ "$answer" == "$target_environment" ]] || die "environment copy was not confirmed."
+  fi
+
+  temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/ddev-amezmo-copy.XXXXXX")" \
+    || die "could not create a temporary transfer directory."
+  cleanup_copy() {
+    [[ ! -d "$temp_dir" ]] || rm -rf -- "$temp_dir"
+  }
+  trap cleanup_copy EXIT HUP INT TERM
+
+  if [[ "$copy_db" == true ]]; then
+    backup_dir="${DDEV_APPROOT}/.ddev/.downloads/amezmo-backups"
+    mkdir -p "$backup_dir"
+    backup_bundle="$(mktemp -d "${backup_dir}/${target_environment}-before-copy-$(date +%Y%m%d%H%M%S).XXXXXX")" \
+      || die "could not create the target database backup directory."
+    backup_file="$backup_bundle/db.sql.gz"
+    printf 'Backing up the %s database before replacement...\n' "$target_environment" >&2
+    if ! DDEV_AMEZMO_TRANSFER_DB_FILE="$backup_file" \
+      DDEV_AMEZMO_TRANSFER_PURPOSE=backup \
+      "$helper" --profile "$target_environment" pull-db; then
+      rmdir -- "$backup_bundle" 2>/dev/null || true
+      die "the target database backup failed; the target database was not changed."
+    fi
+
+    printf 'Exporting and validating the %s database...\n' "$source_environment" >&2
+    DDEV_AMEZMO_TRANSFER_DB_FILE="$temp_dir/db.sql.gz" \
+      DDEV_AMEZMO_TRANSFER_PURPOSE=copy \
+      "$helper" --profile "$source_environment" pull-db
+
+    printf 'Importing the validated database into %s...\n' "$target_environment" >&2
+    DDEV_AMEZMO_TRANSFER_DB_FILE="$temp_dir/db.sql.gz" \
+      DDEV_AMEZMO_COPY_SOURCE="$source_environment" \
+      DDEV_AMEZMO_COPY_ASSET=database \
+      "$helper" --profile "$target_environment" push-db
+    printf 'Target database backup: %s\n' "$backup_file" >&2
+  fi
+
+  if [[ "$copy_files" == true ]]; then
+    mkdir -p "$temp_dir/files"
+    printf 'Downloading persistent files from %s into the temporary transfer directory...\n' "$source_environment" >&2
+    DDEV_AMEZMO_TRANSFER_FILES_PATH="$temp_dir/files" \
+      DDEV_AMEZMO_TRANSFER_PURPOSE=copy \
+      "$helper" --profile "$source_environment" pull-files
+
+    printf 'Uploading persistent files from the temporary transfer directory into %s...\n' "$target_environment" >&2
+    DDEV_AMEZMO_TRANSFER_FILES_PATH="$temp_dir/files" \
+      DDEV_AMEZMO_COPY_SOURCE="$source_environment" \
+      DDEV_AMEZMO_COPY_ASSET=files \
+      "$helper" --profile "$target_environment" push-files
+  fi
+
+  cleanup_copy
+  trap - EXIT HUP INT TERM
+  printf '\nAmezmo environment copy completed: %s -> %s.\n' "$source_environment" "$target_environment"
+}
 
 print_push_warning() {
   local profile_file="${DDEV_APPROOT}/.ddev/amezmo/environments/${environment}.env"
@@ -27,6 +147,11 @@ print_push_warning() {
 }
 
 action="${1:-}"
+
+if [[ "$action" == "copy" ]]; then
+  copy_environments "$@"
+  exit 0
+fi
 
 if [[ "$action" == "configure" ]]; then
   if [[ $# -ne 1 ]]; then
@@ -59,6 +184,7 @@ environment="${2:-}"
 if ! [[ "$environment" =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "Usage: ddev amezmo <pull|push|doctor> <environment> [flags]" >&2
   echo "       ddev amezmo drush <environment> <command> [arguments]" >&2
+  echo "       ddev amezmo copy --from <environment> --to <environment> <--db|--files> [--db|--files] [-y]" >&2
   exit 2
 fi
 
@@ -100,6 +226,7 @@ case "$action" in
   *)
     echo "Usage: ddev amezmo <pull|push|doctor> <environment> [flags]" >&2
     echo "       ddev amezmo drush <environment> <command> [arguments]" >&2
+    echo "       ddev amezmo copy --from <environment> --to <environment> <--db|--files> [--db|--files] [-y]" >&2
     echo "       ddev amezmo configure" >&2
     echo "       ddev amezmo cli <command> [arguments]" >&2
     exit 2

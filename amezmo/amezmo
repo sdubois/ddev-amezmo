@@ -68,6 +68,14 @@ validate_local_path() {
   done
 }
 
+validate_transfer_path() {
+  local key="$1" value="${!1:-}"
+  require_value "$key"
+  [[ "$value" == /* ]] || die "$key must be an absolute temporary transfer path."
+  [[ "$value" != "/" ]] || die "$key may not be '/'."
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || die "$key contains a control character."
+}
+
 validate_ssh_config() {
   require_value AMEZMO_SSH_HOST
   require_value AMEZMO_SSH_PORT
@@ -269,7 +277,11 @@ rsync_supports_protect_args() {
 
 validate_legacy_rsync_paths() {
   local key value
-  for key in AMEZMO_REMOTE_FILES_PATH AMEZMO_LOCAL_FILES_PATH; do
+  local -a keys=(AMEZMO_REMOTE_FILES_PATH)
+  if [[ -z "${DDEV_AMEZMO_TRANSFER_FILES_PATH:-}" ]]; then
+    keys+=(AMEZMO_LOCAL_FILES_PATH)
+  fi
+  for key in "${keys[@]}"; do
     value="${!key}"
     [[ "$value" =~ ^[A-Za-z0-9_./@+-]+$ ]] || die \
       "installed rsync does not support --protect-args; $key must contain only letters, numbers, underscore, dot, slash, at-sign, plus, or hyphen. Upgrade rsync to use paths with spaces or other special characters."
@@ -306,9 +318,14 @@ pull_db() {
   ssh_check
   validate_app_type
   validate_remote_path AMEZMO_REMOTE_APP_ROOT
-  local app_root="${DDEV_APPROOT:-$PWD}" download_dir tmp_dir dump_file
+  local app_root="${DDEV_APPROOT:-$PWD}" download_dir tmp_dir dump_file destination_file
   download_dir="${app_root}/.ddev/.downloads"
   mkdir -p "$download_dir"
+  destination_file="${DDEV_AMEZMO_TRANSFER_DB_FILE:-$download_dir/db.sql.gz}"
+  if [[ -n "${DDEV_AMEZMO_TRANSFER_DB_FILE:-}" ]]; then
+    validate_transfer_path DDEV_AMEZMO_TRANSFER_DB_FILE
+    mkdir -p "$(dirname "$destination_file")"
+  fi
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/ddev-amezmo.XXXXXX")"
   dump_file="$tmp_dir/db.sql.gz"
   cleanup() { rm -rf "$tmp_dir"; }
@@ -341,8 +358,12 @@ pull_db() {
   esac
   [[ -s "$dump_file" ]] || die "The Amezmo database export was empty; the local database was not changed."
   gzip -t "$dump_file" || die "The Amezmo database export was not valid gzip; the local database was not changed."
-  mv "$dump_file" "$download_dir/db.sql.gz"
-  printf 'Amezmo database downloaded. DDEV will now import it into the local database.\n'
+  mv "$dump_file" "$destination_file"
+  if [[ -z "${DDEV_AMEZMO_TRANSFER_PURPOSE:-}" ]]; then
+    printf 'Amezmo database downloaded. DDEV will now import it into the local database.\n'
+  else
+    printf 'Amezmo database export downloaded and validated.\n'
+  fi
   cleanup
   trap - EXIT HUP INT TERM
 }
@@ -353,10 +374,14 @@ pull_files() {
   validate_ssh_config
   ssh_check
   validate_remote_path AMEZMO_REMOTE_FILES_PATH
-  validate_local_path
+  if [[ -n "${DDEV_AMEZMO_TRANSFER_FILES_PATH:-}" ]]; then
+    validate_transfer_path DDEV_AMEZMO_TRANSFER_FILES_PATH
+  else
+    validate_local_path
+  fi
   local app_root="${DDEV_APPROOT:-$PWD}" destination
   local -a rsync_args=( -rlptz --safe-links )
-  destination="$app_root/$AMEZMO_LOCAL_FILES_PATH"
+  destination="${DDEV_AMEZMO_TRANSFER_FILES_PATH:-$app_root/$AMEZMO_LOCAL_FILES_PATH}"
   mkdir -p "$destination"
   if rsync_supports_protect_args; then
     rsync_args+=(--protect-args)
@@ -364,7 +389,7 @@ pull_files() {
     validate_legacy_rsync_paths
     printf 'Installed rsync does not support --protect-args; using compatibility-safe path mode.\n' >&2
   fi
-  printf "Downloading persistent storage from Amezmo's %s environment at %s into local path %s (Amezmo is not changed; files are not deleted)...\n" "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_REMOTE_FILES_PATH" "$AMEZMO_LOCAL_FILES_PATH"
+  printf "Downloading persistent storage from Amezmo's %s environment at %s into local path %s (Amezmo is not changed; files are not deleted)...\n" "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_REMOTE_FILES_PATH" "$destination"
   rsync_args+=(
     --no-owner --no-group \
     --exclude='/.git/' --exclude='/.env' --exclude='/.env.*' \
@@ -381,9 +406,18 @@ pull_files() {
 }
 
 push_warning() {
-  printf "\nWARNING: This will upload your local database and persistent storage files to Amezmo's %s environment at %s:%s.\n" \
-    "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT" >&2
-  printf 'The database upload can replace the target database contents. File uploads overwrite matching files but do not delete files already in the environment.\n' >&2
+  if [[ -n "${DDEV_AMEZMO_COPY_SOURCE:-}" ]]; then
+    printf "\nWARNING: This will copy %s from Amezmo's %s environment into its %s environment at %s:%s.\n" \
+      "${DDEV_AMEZMO_COPY_ASSET:-data}" "$DDEV_AMEZMO_COPY_SOURCE" "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT" >&2
+  else
+    printf "\nWARNING: This will upload your local database and persistent storage files to Amezmo's %s environment at %s:%s.\n" \
+      "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT" >&2
+  fi
+  case "${DDEV_AMEZMO_COPY_ASSET:-}" in
+    database) printf 'The database copy will replace the target database contents.\n' >&2 ;;
+    files) printf 'The file copy overwrites matching files but does not delete files already in the target environment.\n' >&2 ;;
+    *) printf 'The database upload can replace the target database contents. File uploads overwrite matching files but do not delete files already in the environment.\n' >&2 ;;
+  esac
   printf 'Continue only if this Amezmo environment and the local data are correct.\n\n' >&2
 }
 
@@ -394,7 +428,10 @@ push_db() {
   validate_app_type
   validate_remote_path AMEZMO_REMOTE_APP_ROOT
   local app_root="${DDEV_APPROOT:-$PWD}" dump_file remote_cli
-  dump_file="${app_root}/.ddev/.downloads/db.sql.gz"
+  dump_file="${DDEV_AMEZMO_TRANSFER_DB_FILE:-$app_root/.ddev/.downloads/db.sql.gz}"
+  if [[ -n "${DDEV_AMEZMO_TRANSFER_DB_FILE:-}" ]]; then
+    validate_transfer_path DDEV_AMEZMO_TRANSFER_DB_FILE
+  fi
   [[ -s "$dump_file" ]] || die "local database dump was not found at $dump_file. DDEV should create it before db_push_command runs."
   gzip -t "$dump_file" || die "local database dump is not valid gzip: $dump_file"
   push_warning
@@ -402,7 +439,11 @@ push_db() {
   case "$AMEZMO_APP_TYPE" in
     drupal)
       build_remote_drush_command sql:cli
-      printf 'Uploading the local database to Amezmo %s with Drush...\n' "${AMEZMO_ENVIRONMENT:-unknown}"
+      if [[ -n "${DDEV_AMEZMO_COPY_SOURCE:-}" ]]; then
+        printf 'Importing the copied database into Amezmo %s with Drush...\n' "${AMEZMO_ENVIRONMENT:-unknown}"
+      else
+        printf 'Uploading the local database to Amezmo %s with Drush...\n' "${AMEZMO_ENVIRONMENT:-unknown}"
+      fi
       gzip -dc "$dump_file" | remote_command "$REMOTE_DRUSH_COMMAND" \
         || die "Could not upload the database to Amezmo with Drush. Verify AMEZMO_REMOTE_APP_ROOT, AMEZMO_REMOTE_CLI_PATH, the site URI, and the selected environment."
       ;;
@@ -431,10 +472,14 @@ push_files() {
   validate_ssh_config
   ssh_check
   validate_remote_path AMEZMO_REMOTE_FILES_PATH
-  validate_local_path
+  if [[ -n "${DDEV_AMEZMO_TRANSFER_FILES_PATH:-}" ]]; then
+    validate_transfer_path DDEV_AMEZMO_TRANSFER_FILES_PATH
+  else
+    validate_local_path
+  fi
   local app_root="${DDEV_APPROOT:-$PWD}" source
   local -a rsync_args=( -rlptz --safe-links )
-  source="$app_root/$AMEZMO_LOCAL_FILES_PATH"
+  source="${DDEV_AMEZMO_TRANSFER_FILES_PATH:-$app_root/$AMEZMO_LOCAL_FILES_PATH}"
   [[ -d "$source" ]] || die "Local persistent storage directory was not found at $source"
   push_warning
   if rsync_supports_protect_args; then
@@ -443,7 +488,7 @@ push_files() {
     validate_legacy_rsync_paths
     printf 'Installed rsync does not support --protect-args; using compatibility-safe path mode.\n' >&2
   fi
-  printf "Uploading persistent storage from local path %s to Amezmo's %s environment at %s (existing Amezmo files are not deleted)...\n" "$AMEZMO_LOCAL_FILES_PATH" "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_REMOTE_FILES_PATH"
+  printf "Uploading persistent storage from local path %s to Amezmo's %s environment at %s (existing Amezmo files are not deleted)...\n" "$source" "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_REMOTE_FILES_PATH"
   rsync_args+=(
     --no-owner --no-group \
     --exclude='/.git/' --exclude='/.env' --exclude='/.env.*' \
@@ -506,6 +551,7 @@ fi
 
 case "${1:-}" in
   info) info ;;
+  adapter) validate_app_type; printf '%s\n' "$AMEZMO_APP_TYPE" ;;
   auth) auth ;;
   drush) shift; run_drush "$@" ;;
   pull-db) pull_db ;;
@@ -513,5 +559,5 @@ case "${1:-}" in
   doctor) doctor ;;
   push-db) push_db ;;
   push-files) push_files ;;
-  *) die "unknown action '${1:-}'. Expected info, auth, drush, pull-db, pull-files, push-db, push-files, or doctor." ;;
+  *) die "unknown action '${1:-}'. Expected info, adapter, auth, drush, pull-db, pull-files, push-db, push-files, or doctor." ;;
 esac

@@ -165,6 +165,7 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   [ "$(wc -l < "$BATS_TEST_TMPDIR/rsync.calls")" -eq 2 ]
   sed -n '1p' "$BATS_TEST_TMPDIR/rsync.calls" | grep -q 'deployer@production.example.test:/webroot/storage/production/'
   sed -n '2p' "$BATS_TEST_TMPDIR/rsync.calls" | grep -q 'deployer@staging.example.test:/webroot/storage/staging/'
+  sed -n '2p' "$BATS_TEST_TMPDIR/rsync.calls" | grep -q -- '--omit-dir-times'
   ! grep -q -- '--delete' "$BATS_TEST_TMPDIR/rsync.calls"
   [ -z "$(find "$TMPDIR" -maxdepth 1 -type d -name 'ddev-amezmo-copy.*' -print -quit)" ]
 }
@@ -373,6 +374,7 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   grep -q -- '--protect-args' "$BATS_TEST_TMPDIR/rsync.args"
   grep -q "$TEST_ROOT/web/sites/default/files/" "$BATS_TEST_TMPDIR/rsync.args"
   grep -q '/webroot/storage/public/' "$BATS_TEST_TMPDIR/rsync.args"
+  grep -q -- '--omit-dir-times' "$BATS_TEST_TMPDIR/rsync.args"
   ! grep -q -- '--delete' "$BATS_TEST_TMPDIR/rsync.args"
   [[ "$output" == *"WARNING: This will upload your local database"* ]]
 }

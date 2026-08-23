@@ -496,7 +496,7 @@ push_files() {
   fi
   printf "Uploading persistent storage from local path %s to Amezmo's %s environment at %s (existing Amezmo files are not deleted)...\n" "$source" "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_REMOTE_FILES_PATH"
   rsync_args+=(
-    --no-owner --no-group \
+    --no-owner --no-group --omit-dir-times \
     --exclude='/.git/' --exclude='/.env' --exclude='/.env.*' \
     --exclude='*.sql' --exclude='*.sql.gz' --exclude='/logs/' \
     --exclude='/log/' --exclude='/cache/' --exclude='/release/' \

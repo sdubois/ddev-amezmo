@@ -84,6 +84,29 @@ copy_environments() {
   cleanup_copy() {
     [[ ! -d "$temp_dir" ]] || rm -rf -- "$temp_dir"
   }
+  restore_target_database() {
+    local cleanup_succeeded=true restore_import_succeeded=true
+
+    printf 'Clearing partially imported target tables before recovery...\n' >&2
+    if ! "$helper" --profile "$target_environment" clear-db; then
+      cleanup_succeeded=false
+      printf 'Recovery warning: partially imported target tables could not be fully cleared.\n' >&2
+    fi
+
+    printf 'Restoring the validated %s database backup...\n' "$target_environment" >&2
+    if ! DDEV_AMEZMO_TRANSFER_DB_FILE="$backup_file" \
+      DDEV_AMEZMO_RESTORE_BACKUP=true \
+      "$helper" --profile "$target_environment" push-db; then
+      restore_import_succeeded=false
+    fi
+
+    if [[ "$cleanup_succeeded" == true && "$restore_import_succeeded" == true ]]; then
+      printf 'Target database restoration succeeded.\n' >&2
+      return 0
+    fi
+    printf 'Target database restoration FAILED; the target may require manual recovery from %s.\n' "$backup_file" >&2
+    return 1
+  }
   trap cleanup_copy EXIT HUP INT TERM
 
   if [[ "$copy_db" == true ]]; then
@@ -99,18 +122,33 @@ copy_environments() {
       rmdir -- "$backup_bundle" 2>/dev/null || true
       die "the target database backup failed; the target database was not changed."
     fi
+    printf 'Target database backup: %s\n' "$backup_file" >&2
 
     printf 'Exporting and validating the %s database...\n' "$source_environment" >&2
     DDEV_AMEZMO_TRANSFER_DB_FILE="$temp_dir/db.sql.gz" \
       DDEV_AMEZMO_TRANSFER_PURPOSE=copy \
       "$helper" --profile "$source_environment" pull-db
 
+    if [[ "$target_adapter" == "drupal" ]]; then
+      printf 'Clearing the %s database before importing the validated source...\n' "$target_environment" >&2
+      if ! "$helper" --profile "$target_environment" clear-db; then
+        die "the target database could not be cleared; the source database was not imported. The validated target backup remains at $backup_file."
+      fi
+    fi
+
     printf 'Importing the validated database into %s...\n' "$target_environment" >&2
-    DDEV_AMEZMO_TRANSFER_DB_FILE="$temp_dir/db.sql.gz" \
+    if ! DDEV_AMEZMO_TRANSFER_DB_FILE="$temp_dir/db.sql.gz" \
       DDEV_AMEZMO_COPY_SOURCE="$source_environment" \
       DDEV_AMEZMO_COPY_ASSET=database \
-      "$helper" --profile "$target_environment" push-db
-    printf 'Target database backup: %s\n' "$backup_file" >&2
+      "$helper" --profile "$target_environment" push-db; then
+      if [[ "$target_adapter" == "drupal" ]]; then
+        printf 'Source database import FAILED after the target database was cleared.\n' >&2
+        restore_target_database || true
+      else
+        printf 'Source database import FAILED; automatic replacement recovery is currently available only for Drupal copies.\n' >&2
+      fi
+      return 1
+    fi
   fi
 
   if [[ "$copy_files" == true ]]; then

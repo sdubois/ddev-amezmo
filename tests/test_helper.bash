@@ -21,8 +21,9 @@ setup_fixture() {
   export AMEZMO_SITE_URI=https://staging.example.test
   export AMEZMO_REMOTE_FILES_PATH=/webroot/storage/public
   export AMEZMO_LOCAL_FILES_PATH=web/sites/default/files
-  unset FAKE_SSH_FAIL FAKE_SSH_FAIL_ONCE FAKE_DUMP_FAIL FAKE_DRUSH_FAIL FAKE_RSYNC_FAIL FAKE_RSYNC_NO_PROTECT_ARGS FAKE_CAPTURE
-  unset DDEV_AMEZMO_TRANSFER_DB_FILE DDEV_AMEZMO_TRANSFER_FILES_PATH DDEV_AMEZMO_TRANSFER_PURPOSE DDEV_AMEZMO_COPY_SOURCE DDEV_AMEZMO_COPY_ASSET
+  unset FAKE_SSH_FAIL FAKE_SSH_FAIL_ONCE FAKE_DUMP_FAIL FAKE_SOURCE_DUMP_INVALID FAKE_DRUSH_FAIL FAKE_IMPORT_FAIL_ONCE FAKE_RESTORE_FAIL FAKE_DB_STATE_DIR
+  unset FAKE_RSYNC_FAIL FAKE_RSYNC_NO_PROTECT_ARGS FAKE_CAPTURE
+  unset DDEV_AMEZMO_TRANSFER_DB_FILE DDEV_AMEZMO_TRANSFER_FILES_PATH DDEV_AMEZMO_TRANSFER_PURPOSE DDEV_AMEZMO_COPY_SOURCE DDEV_AMEZMO_COPY_ASSET DDEV_AMEZMO_RESTORE_BACKUP
 
   make_fake ssh '#!/usr/bin/env bash
 set -eu
@@ -37,9 +38,42 @@ if [[ "$last_arg" == *"/drush"* ]]; then
     [[ "$last_arg" == *"--no-interaction"* ]] || { printf "%s\n" "TTY mode requires /dev/tty to be read/writable." >&2; exit 26; }
     [[ "${FAKE_DUMP_FAIL:-}" != 1 ]] || exit 24
     printf "%s\n" "diagnostic output belongs on stderr" >&2
-    printf "%s\n" "CREATE TABLE test (id int);" | gzip
+    if [[ "${FAKE_SOURCE_DUMP_INVALID:-}" == 1 && "$*" == *"production.example.test"* ]]; then
+      printf "%s\n" "not a gzip stream"
+    elif [[ -n "${FAKE_DB_STATE_DIR:-}" ]]; then
+      environment=staging
+      [[ "$*" != *"production.example.test"* ]] || environment=production
+      while IFS="|" read -r table value; do
+        [[ -n "$table" ]] || continue
+        printf "%s\n" "-- STATE $table $value"
+        printf "CREATE TABLE %s (value varchar(255));\n" "$table"
+        printf "INSERT INTO %s VALUES (\"%s\");\n" "$table" "$value"
+      done < "${FAKE_DB_STATE_DIR}/${environment}.state" | gzip
+    else
+      printf "%s\n" "CREATE TABLE test (id int);" | gzip
+    fi
+  elif [[ "$last_arg" == *"sql:drop"* ]]; then
+    if [[ -n "${FAKE_DB_STATE_DIR:-}" ]]; then
+      : > "${FAKE_DB_STATE_DIR}/staging.state"
+    fi
   elif [[ "$last_arg" == *"sql:connect"* ]]; then
-    cat >/dev/null
+    import_count_file="${BATS_TEST_TMPDIR}/import.count"
+    import_count=0
+    [[ ! -r "$import_count_file" ]] || import_count="$(<"$import_count_file")"
+    import_count=$((import_count + 1))
+    printf "%s\n" "$import_count" > "$import_count_file"
+    import_file="${BATS_TEST_TMPDIR}/import.${import_count}.sql"
+    cat > "$import_file"
+    if [[ "${FAKE_RESTORE_FAIL:-}" == 1 && "$import_count" -gt 1 ]]; then exit 29; fi
+    if [[ -n "${FAKE_DB_STATE_DIR:-}" ]]; then
+      : > "${FAKE_DB_STATE_DIR}/staging.state"
+      while read -r marker state table value; do
+        if [[ "$marker" == "--" && "$state" == "STATE" ]]; then
+          printf "%s|%s\n" "$table" "$value" >> "${FAKE_DB_STATE_DIR}/staging.state"
+        fi
+      done < "$import_file"
+    fi
+    if [[ "${FAKE_IMPORT_FAIL_ONCE:-}" == 1 && "$import_count" -eq 1 ]]; then exit 28; fi
   fi
 elif [[ "$*" == *"db export"* ]]; then
   [[ "${FAKE_DUMP_FAIL:-}" != 1 ]] || exit 24

@@ -138,6 +138,10 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
 @test "amezmo copy replaces the target database after creating a validated backup" {
   install_test_profile production production.example.test 2201 https://production.example.test /webroot/storage/production
   install_test_profile staging staging.example.test 2202 https://staging.example.test /webroot/storage/staging
+  export FAKE_DB_STATE_DIR="$BATS_TEST_TMPDIR/database-state"
+  mkdir -p "$FAKE_DB_STATE_DIR"
+  printf '%s\n' 'source_table|fresh' > "$FAKE_DB_STATE_DIR/production.state"
+  printf '%s\n' 'shared_table|stale' 'target_only_table|staging-only' > "$FAKE_DB_STATE_DIR/staging.state"
 
   run "$BATS_TEST_DIRNAME/../commands/host/amezmo" copy \
     --from production --to staging --db -y
@@ -146,13 +150,77 @@ printf "%s\n" "$*" > "${BATS_TEST_TMPDIR}/ddev.args"'
   [[ "$output" == *"Target: staging (drupal)"* ]]
   [[ "$output" == *"Amezmo environment copy completed: production -> staging"* ]]
   [ "$(grep -c "sql:dump" "$BATS_TEST_TMPDIR/ssh.calls")" -eq 2 ]
+  [ "$(grep -c "sql:drop" "$BATS_TEST_TMPDIR/ssh.calls")" -eq 1 ]
   [ "$(grep -c "sql:connect" "$BATS_TEST_TMPDIR/ssh.calls")" -eq 1 ]
   [ "$(grep -c "sql:cli" "$BATS_TEST_TMPDIR/ssh.calls")" -eq 0 ]
+  [ "$(<"$FAKE_DB_STATE_DIR/staging.state")" = 'source_table|fresh' ]
+  ! grep -q 'target_only_table' "$FAKE_DB_STATE_DIR/staging.state"
+  grep -E 'sql:(dump|drop|connect)' "$BATS_TEST_TMPDIR/ssh.calls" > "$BATS_TEST_TMPDIR/database.actions"
+  [[ "$(sed -n '1p' "$BATS_TEST_TMPDIR/database.actions")" == *"staging.example.test"*"sql:dump"* ]]
+  [[ "$(sed -n '2p' "$BATS_TEST_TMPDIR/database.actions")" == *"production.example.test"*"sql:dump"* ]]
+  [[ "$(sed -n '3p' "$BATS_TEST_TMPDIR/database.actions")" == *"staging.example.test"*"sql:drop"*"'-y'"* ]]
+  [[ "$(sed -n '4p' "$BATS_TEST_TMPDIR/database.actions")" == *"staging.example.test"*"sql:connect"* ]]
   backup_file="$(find "$TEST_ROOT/.ddev/.downloads/amezmo-backups" -type f -path '*/staging-before-copy-*/db.sql.gz' -print -quit)"
   [ -n "$backup_file" ]
   gzip -t "$backup_file"
   [ ! -e "$TEST_ROOT/.ddev/.downloads/db.sql.gz" ]
   [ -z "$(find "$TMPDIR" -maxdepth 1 -type d -name 'ddev-amezmo-copy.*' -print -quit)" ]
+}
+
+@test "amezmo copy does not clear the target before backup and source validation succeed" {
+  install_test_profile production production.example.test 2201 https://production.example.test /webroot/storage/production
+  install_test_profile staging staging.example.test 2202 https://staging.example.test /webroot/storage/staging
+
+  export FAKE_DUMP_FAIL=1
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" copy \
+    --from production --to staging --db -y
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"target database backup failed"* ]]
+  ! grep -q 'sql:drop' "$BATS_TEST_TMPDIR/ssh.calls"
+
+  rm -f "$BATS_TEST_TMPDIR/ssh.calls"
+  unset FAKE_DUMP_FAIL
+  export FAKE_SOURCE_DUMP_INVALID=1
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" copy \
+    --from production --to staging --db -y
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"database export was not valid gzip"* ]]
+  ! grep -q 'sql:drop' "$BATS_TEST_TMPDIR/ssh.calls"
+}
+
+@test "amezmo copy restores the original target after a source import failure and remains nonzero" {
+  install_test_profile production production.example.test 2201 https://production.example.test /webroot/storage/production
+  install_test_profile staging staging.example.test 2202 https://staging.example.test /webroot/storage/staging
+  export FAKE_DB_STATE_DIR="$BATS_TEST_TMPDIR/database-state"
+  export FAKE_IMPORT_FAIL_ONCE=1
+  mkdir -p "$FAKE_DB_STATE_DIR"
+  printf '%s\n' 'source_table|fresh' > "$FAKE_DB_STATE_DIR/production.state"
+  printf '%s\n' 'shared_table|original' 'target_only_table|staging-only' > "$FAKE_DB_STATE_DIR/staging.state"
+  cp "$FAKE_DB_STATE_DIR/staging.state" "$BATS_TEST_TMPDIR/original-target.state"
+
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" copy \
+    --from production --to staging --db -y
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Source database import FAILED"* ]]
+  [[ "$output" == *"Target database restoration succeeded"* ]]
+  cmp "$BATS_TEST_TMPDIR/original-target.state" "$FAKE_DB_STATE_DIR/staging.state"
+  [ "$(grep -c 'sql:drop' "$BATS_TEST_TMPDIR/ssh.calls")" -eq 2 ]
+  [ "$(grep -c 'sql:connect' "$BATS_TEST_TMPDIR/ssh.calls")" -eq 2 ]
+}
+
+@test "amezmo copy clearly reports a failed target restoration" {
+  install_test_profile production production.example.test 2201 https://production.example.test /webroot/storage/production
+  install_test_profile staging staging.example.test 2202 https://staging.example.test /webroot/storage/staging
+  export FAKE_IMPORT_FAIL_ONCE=1
+  export FAKE_RESTORE_FAIL=1
+
+  run "$BATS_TEST_DIRNAME/../commands/host/amezmo" copy \
+    --from production --to staging --db -y
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Source database import FAILED"* ]]
+  [[ "$output" == *"Target database restoration FAILED"* ]]
+  [[ "$output" == *"manual recovery"* ]]
+  [ "$(<"$BATS_TEST_TMPDIR/import.count")" -eq 2 ]
 }
 
 @test "amezmo copy relays files without deleting unmatched target files" {

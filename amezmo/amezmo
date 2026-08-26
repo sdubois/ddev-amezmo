@@ -272,6 +272,22 @@ build_remote_drush_import_command() {
   REMOTE_DRUSH_COMMAND="cd $(shell_quote "$AMEZMO_REMOTE_APP_ROOT") && \$($REMOTE_DRUSH_INVOCATION)"
 }
 
+clear_db() {
+  require_command ssh
+  validate_ssh_config
+  ssh_check
+  validate_app_type
+  validate_remote_path AMEZMO_REMOTE_APP_ROOT
+  [[ "$AMEZMO_APP_TYPE" == "drupal" ]] \
+    || die "database clearing is available only when AMEZMO_APP_TYPE=drupal."
+
+  build_remote_drush_command sql:drop -y
+  printf 'Clearing all tables from the Amezmo %s database with Drush...\n' "${AMEZMO_ENVIRONMENT:-unknown}"
+  remote_command "$REMOTE_DRUSH_COMMAND" \
+    || die "Could not clear the Amezmo database with Drush. Verify AMEZMO_REMOTE_APP_ROOT, AMEZMO_REMOTE_CLI_PATH, the site URI, and the selected environment."
+  printf 'Target database tables cleared.\n'
+}
+
 remote_drush_tty() {
   build_remote_drush_command "$@"
   remote_command_tty "$REMOTE_DRUSH_COMMAND"
@@ -412,7 +428,10 @@ pull_files() {
 }
 
 push_warning() {
-  if [[ -n "${DDEV_AMEZMO_COPY_SOURCE:-}" ]]; then
+  if [[ -n "${DDEV_AMEZMO_RESTORE_BACKUP:-}" ]]; then
+    printf "\nRECOVERY: Restoring the validated database backup into Amezmo's %s environment at %s:%s.\n" \
+      "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT" >&2
+  elif [[ -n "${DDEV_AMEZMO_COPY_SOURCE:-}" ]]; then
     printf "\nWARNING: This will copy %s from Amezmo's %s environment into its %s environment at %s:%s.\n" \
       "${DDEV_AMEZMO_COPY_ASSET:-data}" "$DDEV_AMEZMO_COPY_SOURCE" "${AMEZMO_ENVIRONMENT:-unknown}" "$AMEZMO_SSH_HOST" "$AMEZMO_SSH_PORT" >&2
   else
@@ -445,7 +464,9 @@ push_db() {
   case "$AMEZMO_APP_TYPE" in
     drupal)
       build_remote_drush_import_command
-      if [[ -n "${DDEV_AMEZMO_COPY_SOURCE:-}" ]]; then
+      if [[ -n "${DDEV_AMEZMO_RESTORE_BACKUP:-}" ]]; then
+        printf 'Restoring the validated database backup into Amezmo %s with Drush...\n' "${AMEZMO_ENVIRONMENT:-unknown}"
+      elif [[ -n "${DDEV_AMEZMO_COPY_SOURCE:-}" ]]; then
         printf 'Importing the copied database into Amezmo %s with Drush...\n' "${AMEZMO_ENVIRONMENT:-unknown}"
       else
         printf 'Uploading the local database to Amezmo %s with Drush...\n' "${AMEZMO_ENVIRONMENT:-unknown}"
@@ -560,10 +581,11 @@ case "${1:-}" in
   adapter) validate_app_type; printf '%s\n' "$AMEZMO_APP_TYPE" ;;
   auth) auth ;;
   drush) shift; run_drush "$@" ;;
+  clear-db) clear_db ;;
   pull-db) pull_db ;;
   pull-files) pull_files ;;
   doctor) doctor ;;
   push-db) push_db ;;
   push-files) push_files ;;
-  *) die "unknown action '${1:-}'. Expected info, adapter, auth, drush, pull-db, pull-files, push-db, push-files, or doctor." ;;
+  *) die "unknown action '${1:-}'. Expected info, adapter, auth, drush, clear-db, pull-db, pull-files, push-db, push-files, or doctor." ;;
 esac
